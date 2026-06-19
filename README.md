@@ -1,4 +1,4 @@
-# QuantumCanvas — QA Build
+# QuantumCanvas 
 
 Canvas → Pseudocode → Qiskit → IonQ
 
