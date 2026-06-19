@@ -59,7 +59,10 @@ async def execute(req: ExecuteRequest):
         logger.save("ir.json",       req.ir_json)
         logger.save("pseudocode.txt",req.pseudocode_txt)
         logger.save("qiskit.py",     req.qiskit_py)
-        logger.log(f"Run {run_id} started — backend={req.backend} shots={req.shots}")
+
+        # Compute circuit hash + git commit; writes metadata.json and circuit_hash.txt
+        circuit_hash = logger.save_metadata(req.ir_json, req.backend, req.shots)
+        logger.log(f"Run {run_id} started — backend={req.backend} shots={req.shots} hash={circuit_hash[:12]}…")
 
         runner = IonQRunner(
             api_key    = settings.IONQ_API_KEY,
@@ -73,8 +76,9 @@ async def execute(req: ExecuteRequest):
                 qiskit_code = req.qiskit_py,
                 shots       = req.shots,
             )
+            counts["circuit_hash"] = circuit_hash   # cross-link result to circuit
             logger.save("results.json", counts)
-            logger.log(f"Simulator complete — {sum(counts.values())} shots")
+            logger.log(f"Simulator complete — {sum(v for k,v in counts.items() if k != 'circuit_hash')} shots")
             return ExecuteResponse(run_id=run_id, counts=counts)
 
         elif req.backend == "ionq":
