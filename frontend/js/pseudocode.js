@@ -1,509 +1,158 @@
-/* QuantumCanvas — pseudocode panel, Qiskit panel */
+// QuantumCanvas — Pseudocode generator (IR → human-readable steps)
+// Load order: state.js → ir.js → pseudocode.js → ui.js → qiskit-generator.js → qiskit-panel.js
 
-/* ══════════════════════════════════════════════════════════
-   PSEUDOCODE ENGINE — styles
-   ══════════════════════════════════════════════════════════ */
+// ── Pseudocode Generator ─────────────────────────────────────────────
+function generatePseudocode(ir){
+  const labels = ir.qubits.map(q=>q.label);
+  const steps  = [];
+  let sn = 0;
 
-/* topbar button */
-.pc-btn {
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--gray);
-  font-family: 'DM Sans', sans-serif;
-  font-size: .8rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all .15s;
-  letter-spacing: .02em;
-}
-.pc-btn:hover { border-color: var(--violet); color: var(--violet); background: var(--violet2); }
-.pc-btn:disabled { opacity: .3; cursor: default; }
+  const addStep=(op,targets,code,plain,qnote)=>
+    steps.push({n:++sn,op,targets,code,plain,qnote});
 
-/* overlay */
-#pc-overlay {
-  position: absolute; inset: 0;
-  background: rgba(10,12,20,.82);
-  z-index: 200; display: none;
-  align-items: flex-start; justify-content: center;
-  padding: 20px; overflow-y: auto;
-}
-#pc-overlay.open { display: flex; }
+  // Always inject INITIALIZE
+  addStep('INITIALIZE', labels,
+    `INITIALIZE [${labels.join(', ')}]  →  |${'0'.repeat(ir.n)}⟩`,
+    `All ${ir.n} qubit${ir.n>1?'s':''} start in the ground state — like coins lying flat, showing neither 0 nor 1 yet.`,
+    `|${'0'.repeat(ir.n)}⟩ computational basis state`);
 
-/* panel */
-#pc-panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  width: 100%; max-width: 580px;
-  flex-shrink: 0; overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0,0,0,.6);
-}
+  // Walk global log in chronological order.
+  // Group consecutive entries with the same op AND (for boost) the same seq.
+  // This preserves exact user action order.
+  const log = ir.globalLog;
+  let i=0;
+  while(i<log.length){
+    const op=log[i].op;
+    const batch=[];
+    // For boost: group all consecutive boost entries (one click = one logical action)
+    // For other ops: group consecutive same-op entries
+    if(op==='boost'){
+      while(i<log.length && log[i].op==='boost'){ batch.push(log[i]); i++; }
+    } else {
+      while(i<log.length && log[i].op===op){ batch.push(log[i]); i++; }
+    }
+    const tgts = [...new Set(batch.map(b=>ir.qubits.find(q=>q.id===b.qubit)?.label||b.qubit))];
 
-.pc-header {
-  display: flex; align-items: flex-start;
-  justify-content: space-between;
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.pc-title-block { flex: 1; }
-.pc-label {
-  font-family: 'Space Mono', monospace;
-  font-size: .6rem; color: var(--gray);
-  letter-spacing: .12em; text-transform: uppercase; margin-bottom: 3px;
-}
-.pc-title { font-size: .95rem; font-weight: 500; color: var(--white); margin-bottom: 2px; }
-.pc-meta  { font-family: 'Space Mono', monospace; font-size: .65rem; color: var(--gray); }
-.pc-close {
-  background: none; border: none; color: var(--gray);
-  font-size: 1.1rem; cursor: pointer; padding: 0 4px;
-  line-height: 1; transition: color .15s;
-}
-.pc-close:hover { color: var(--white); }
+    if(op==='shake'){
+      // Bug 3 fix: states and count are scoped to THIS batch's qubits only
+      const batchN = tgts.length;
+      const batchStates = Math.pow(2, batchN);
+      const qnNote = batchN===1
+        ? `H|0⟩ = (|0⟩+|1⟩)/√2`
+        : batchN===2
+          ? `H⊗2|00⟩ = ½(|00⟩+|01⟩+|10⟩+|11⟩)`
+          : `H⊗${batchN}|${'0'.repeat(batchN)}⟩ = (1/√${batchStates}) Σ|x⟩ for x∈{0,1}^${batchN}`;
+      const tgtStr = tgts.length===1 ? tgts[0] : `[${tgts.join(', ')}]`;
+      addStep('SHAKE',tgts,
+        `SHAKE [${tgts.join(', ')}]  →  spread ${tgtStr} into ${batchStates === 2 ? 'both possibilities' : `all ${batchStates} combinations`} equally`,
+        tgts.length===1
+          ? `Shake puts ${tgts[0]} into superposition — both |0⟩ and |1⟩ are simultaneously possible with equal probability. The qubit is no longer a definite 0 or 1.`
+          : `Shake puts each of [${tgts.join(', ')}] into superposition. All ${batchStates} combinations of these ${batchN} qubits now exist simultaneously with equal probability.`,
+        qnNote);
+    }
+    else if(op==='mark'){
+      addStep('MARK',tgts,
+        `MARK [${tgts.join(', ')}]  →  flip hidden phase of target`,
+        `Marking ${tgts.join(' and ')} flips a hidden sign on the target answer. The probabilities still look equal — but the target now carries a negative amplitude underneath. This is how the search knows what it is looking for.`,
+        `Phase oracle: Uf|x⟩ = (−1)^f(x)|x⟩ on [${tgts.join(', ')}]`);
+    }
+    else if(op==='boost'){
+      // Bug 4 fix: count distinct Boost CLICKS, not entries in the batch.
+      // All qubits boosted by one click share the same seq value.
+      // Collect the seq values from the source tagged ops on each qubit.
+      const boostedQubits = batch.map(b => ir.qubits.find(q=>q.id===b.qubit));
+      const seqValues = new Set();
+      boostedQubits.forEach(q => {
+        if(!q) return;
+        q.taggedOps.filter(t=>t.op==='boost').forEach(t=>seqValues.add(t.seq));
+      });
+      // If seq values aren't available (legacy), fall back to 1 per unique qubit label
+      const boostClickCount = seqValues.size > 0 ? seqValues.size : 1;
+      const opt = ir.optimal;
+      const N   = ir.N;   // search space: 2^n states — this is what optimal is based on
+      const overBoost = boostClickCount > opt;
+      const countStr = boostClickCount===1 ? '1×' : `${boostClickCount}×`;
+      const optStr   = opt===1 ? '1×' : `${opt}×`;
+      const warnNote = overBoost
+        ? `  ⚠ optimal is ${optStr} for a ${N}-state search space`
+        : ` (optimal: ${optStr} for a ${N}-state search space)`;
+      addStep('BOOST',tgts,
+        `BOOST [${tgts.join(', ')}]  ${countStr}  →  amplify marked target${warnNote}`,
+        overBoost
+          ? `Boost uses interference to raise the marked target's probability. You applied Boost ${boostClickCount} times — for a ${N}-state search space the optimal is ${opt}×. Past that point the target's probability reverses back down.`
+          : `Boost uses interference to raise the marked target's probability and lower all others. ${countStr} applied — optimal for a ${N}-state search space is ${optStr}.`,
+        `Grover diffusion: (2|ψ⟩⟨ψ|−I) on [${tgts.join(', ')}]`);
+    }
+    else if(op==='link'){
+      // Each link action produces two entries (src + tgt). Emit one step per edge.
+      const processedEdges = new Set();
+      batch.forEach(b=>{
+        const edge=ir.edges.find(e=>e.src===b.qubit || e.tgt===b.qubit);
+        if(!edge||processedEdges.has(edge.id)) return;
+        processedEdges.add(edge.id);
+        const sl=ir.qubits.find(q=>q.id===edge.src)?.label||edge.src;
+        const tl=ir.qubits.find(q=>q.id===edge.tgt)?.label||edge.tgt;
+        addStep('LINK',[sl,tl],
+          `LINK ${sl} → ${tl}  →  create entangled pair  |Φ+⟩`,
+          `Linking ${sl} and ${tl} entangles them. Measuring one instantly determines the other — no matter how far apart. This is what Einstein called "spooky action at a distance."`,
+          `CNOT: cx(${sl},${tl}) → |Φ+⟩ = (|00⟩+|11⟩)/√2`);
+      });
+    }
+    else if(op==='look'){
+      // Bug 2 fix: all look entries in batch (including correlated collapses) get their own line
+      const correlatedInBatch = batch.filter(b=>b.correlated);
+      const directInBatch     = batch.filter(b=>!b.correlated);
 
-/* violation / warning cards */
-.pc-violations {
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-  display: flex; flex-direction: column; gap: 6px;
-}
-.pc-vcard {
-  border-radius: 6px; padding: 9px 11px; font-size: .78rem;
-}
-.pc-vcard.error   { background: rgba(255,107,157,.08); border: 1px solid rgba(255,107,157,.25); color: var(--rose); }
-.pc-vcard.warning { background: rgba(255,184,77,.08);  border: 1px solid rgba(255,184,77,.25);  color: var(--amber); }
-.pc-vcard-rule  { font-family: 'Space Mono', monospace; font-size: .62rem; opacity: .7; margin-bottom: 3px; }
-.pc-vcard-msg   { font-weight: 500; margin-bottom: 3px; }
-.pc-vcard-plain { font-size: .73rem; opacity: .85; margin-bottom: 4px; line-height: 1.5; }
-.pc-vcard-fix   { font-size: .68rem; font-family: 'Space Mono', monospace; opacity: .7; }
+      if(directInBatch.length){
+        const dtgts   = [...new Set(directInBatch.map(b=>ir.qubits.find(q=>q.id===b.qubit)?.label||b.qubit))];
+        const dresults = directInBatch.map(b=>{ const q=ir.qubits.find(q=>q.id===b.qubit); return q?.result??'?'; });
+        const dResStr  = directInBatch.map((b,ri)=>{ const l=ir.qubits.find(q=>q.id===b.qubit)?.label||b.qubit; return `${l}=${dresults[ri]}`; }).join(', ');
+        addStep('LOOK',dtgts,
+          `LOOK [${dtgts.join(', ')}]  →  collapse to definite outcome  (${dResStr})`,
+          `Look measures ${dtgts.join(' and ')}. Superposition collapses to a single definite value. This is irreversible — ${dtgts.length>1?'these qubits are':'this qubit is'} now classical.`,
+          `Projective measurement ⟨x|ρ|x⟩. Result: ${dResStr}`);
+      }
+      if(correlatedInBatch.length){
+        const ctgts    = [...new Set(correlatedInBatch.map(b=>ir.qubits.find(q=>q.id===b.qubit)?.label||b.qubit))];
+        const cresults = correlatedInBatch.map(b=>{ const q=ir.qubits.find(q=>q.id===b.qubit); return q?.result??'?'; });
+        const cResStr  = correlatedInBatch.map((b,ri)=>{ const l=ir.qubits.find(q=>q.id===b.qubit)?.label||b.qubit; return `${l}=${cresults[ri]}`; }).join(', ');
+        addStep('LOOK',ctgts,
+          `LOOK [${ctgts.join(', ')}]  →  correlated collapse  (${cResStr})`,
+          `${ctgts.join(' and ')} ${ctgts.length>1?'collapse':'collapses'} automatically because ${ctgts.length>1?'they were':'it was'} entangled with the measured qubit. No measurement was needed — the Link determined the outcome instantly.`,
+          `Entanglement collapse: |Φ+⟩ measured → partner forced to |${cresults[0]??'?'}⟩`);
+      }
+    }
+  }
 
-/* steps */
-.pc-steps { padding: 4px 0; }
-.pc-step {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-}
-.pc-step:last-child { border-bottom: none; }
-.pc-step.dimmed { opacity: .3; }
+  const patternTitles={
+    grover_like:'Quantum Search — Grover-like Pattern',
+    bell_pair:'Bell Pair — Quantum Entanglement',
+    superposition_only:'Superposition Only — Equal Distribution',
+    entangled_search:'Entangled Search — Grover + Entanglement',
+    marked_no_boost:'Incomplete Search — Mark without Boost',
+    mixed:'Mixed Operations',
+    empty:'Empty Canvas',invalid:'Invalid Sequence',
+  };
+  const patternNotes={
+    grover_like:'This sequence follows the Grover search structure: initialize → equal superposition → phase marking → amplitude amplification → measurement.',
+    bell_pair:'One qubit shaken into superposition, then linked to a second, creating a maximally entangled Bell pair.',
+    superposition_only:'All qubits are in equal superposition. No target marked. Useful for generating uniform random outcomes.',
+    entangled_search:'Combines entanglement with amplitude amplification for a more complex search structure.',
+    marked_no_boost:'A target is marked but Boost not applied. Phase is flipped but probabilities unchanged. Add Boost to amplify.',
+    mixed:'Multiple patterns across qubits.',
+    empty:'',invalid:'',
+  };
 
-.pc-stripe { width: 3px; flex-shrink: 0; }
-.s-init    { background: var(--border); }
-.s-shake   { background: var(--teal); }
-.s-mark    { background: var(--rose); }
-.s-boost   { background: var(--amber); }
-.s-link    { background: var(--violet); }
-.s-look    { background: var(--gray); }
-
-.pc-step-body { padding: 10px 14px; flex: 1; min-width: 0; }
-.pc-step-num  {
-  font-family: 'Space Mono', monospace;
-  font-size: .58rem; color: var(--gray); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .06em;
-}
-.pc-step-code {
-  font-family: 'Space Mono', monospace;
-  font-size: .76rem; color: var(--white); margin-bottom: 4px;
-  word-break: break-all; line-height: 1.5;
-}
-.pc-step-plain  { font-size: .76rem; color: var(--gray); line-height: 1.55; margin-bottom: 4px; }
-.pc-qnote-btn {
-  font-family: 'Space Mono', monospace; font-size: .6rem;
-  color: var(--dim); cursor: pointer; border: none;
-  background: none; padding: 0; transition: color .15s;
-}
-.pc-qnote-btn:hover { color: var(--gray); }
-.pc-qnote {
-  font-family: 'Space Mono', monospace; font-size: .65rem;
-  color: var(--gray); margin-top: 5px; display: none; line-height: 1.6;
-  border-left: 2px solid var(--border); padding-left: 8px;
-}
-.pc-qnote.open { display: block; }
-
-/* summary table */
-.pc-summary { border-top: 1px solid var(--border); padding: 10px 14px; }
-.pc-sum-head {
-  font-family: 'Space Mono', monospace; font-size: .6rem;
-  color: var(--gray); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 7px;
-}
-.pc-tbl { width: 100%; border-collapse: collapse; font-size: .72rem; }
-.pc-tbl th {
-  text-align: left; font-family: 'Space Mono', monospace; font-size: .58rem;
-  color: var(--gray); text-transform: uppercase; letter-spacing: .08em;
-  padding: 3px 6px; border-bottom: 1px solid var(--border);
-}
-.pc-tbl td {
-  padding: 5px 6px; color: var(--white);
-  border-bottom: 1px solid rgba(30,37,64,.5);
-  font-family: 'Space Mono', monospace; font-size: .68rem;
-}
-.pc-tbl tr:last-child td { border-bottom: none; }
-.sbadge {
-  display: inline-block; padding: 1px 7px; border-radius: 20px;
-  font-size: .58rem; font-weight: 500;
-}
-.sb-boosted   { background: var(--amber2); color: var(--amber); }
-.sb-measured  { background: rgba(46,53,80,.6); color: var(--gray); }
-.sb-super     { background: var(--teal2); color: var(--teal); }
-.sb-marked    { background: var(--rose2); color: var(--rose); }
-.sb-entangled { background: var(--violet2); color: var(--violet); }
-.sb-ground    { background: var(--card); color: var(--gray); }
-
-/* pattern note */
-.pc-pattern {
-  font-size: .72rem; color: var(--gray); font-style: italic;
-  padding: 8px 14px; border-top: 1px solid var(--border); line-height: 1.55;
-}
-
-/* footer */
-.pc-footer {
-  padding: 12px 14px; border-top: 1px solid var(--border);
-  display: flex; gap: 8px; align-items: center;
-}
-.pc-qiskit-btn {
-  padding: 8px 18px; border-radius: 6px;
-  border: 1px solid var(--teal); background: var(--teal2);
-  color: var(--teal); font-family: 'DM Sans', sans-serif;
-  font-size: .8rem; font-weight: 500; cursor: pointer;
-  transition: background .15s; letter-spacing: .04em;
-}
-.pc-qiskit-btn:hover { background: rgba(0,212,170,.2); }
-.pc-qiskit-btn:disabled {
-  opacity: .35; cursor: default;
-  border-color: var(--border); color: var(--gray); background: transparent;
-}
-.pc-footer-cancel {
-  padding: 8px 14px; border-radius: 6px;
-  border: 1px solid var(--border); background: transparent;
-  color: var(--gray); font-family: 'DM Sans', sans-serif;
-  font-size: .8rem; cursor: pointer; transition: all .15s;
-}
-.pc-footer-cancel:hover { border-color: var(--gray); color: var(--white); }
-.pc-status {
-  font-family: 'Space Mono', monospace; font-size: .65rem; margin-left: auto;
-}
-.pc-status.ok   { color: var(--teal); }
-.pc-status.warn { color: var(--amber); }
-.pc-status.err  { color: var(--rose); }
-
-/* raw timeline */
-.pc-timeline { padding: 10px 14px; border-bottom: 1px solid var(--border); }
-.pc-tl-head {
-  font-family: 'Space Mono', monospace; font-size: .6rem; color: var(--gray);
-  text-transform: uppercase; letter-spacing: .1em; margin-bottom: 0;
-  display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
-}
-.pc-tl-head:hover { color: var(--white); }
-.pc-tl-list {
-  display: none; margin-top: 6px;
-  font-family: 'Space Mono', monospace; font-size: .68rem; line-height: 1.85;
-}
-.pc-tl-list.open { display: block; }
-.pc-tl-row { display: flex; gap: 8px; align-items: baseline; }
-.pc-tl-n { color: var(--dim); min-width: 16px; font-size: .58rem; text-align: right; flex-shrink: 0; }
-.pc-tl-op { font-weight: 700; }
-.tl-shake { color: var(--teal); }
-.tl-mark  { color: var(--rose); }
-.tl-boost { color: var(--amber); }
-.tl-link  { color: var(--violet); }
-.tl-look  { color: var(--gray); }
-.pc-tl-detail { color: var(--dim); font-size: .65rem; }
-
-/* ── Qiskit panel ── */
-.qk-code-wrap {
-  border-top: 1px solid var(--border);
-  background: #0d1117;
-}
-.qk-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 14px;
-  border-bottom: 1px solid rgba(255,255,255,.06);
-}
-.qk-lang-badge {
-  font-family: 'Space Mono', monospace; font-size: .6rem;
-  color: var(--gray); letter-spacing: .08em;
-}
-.qk-copy-btn {
-  font-family: 'Space Mono', monospace; font-size: .65rem;
-  background: none; border: 1px solid var(--border);
-  color: var(--gray); border-radius: 4px; padding: 2px 10px;
-  cursor: pointer; transition: all .15s;
-}
-.qk-copy-btn:hover { border-color: var(--teal); color: var(--teal); }
-.qk-pre {
-  margin: 0; padding: 14px 16px;
-  font-family: 'Space Mono', monospace; font-size: .72rem;
-  line-height: 1.7; color: #e6edf3;
-  overflow-x: auto; white-space: pre;
-  max-height: 360px; overflow-y: auto;
-}
-/* syntax colours */
-.qk-kw { color: #ff7b72; }   /* keywords */
-.qk-bi { color: #79c0ff; }   /* builtins / classes */
-.qk-fn { color: #d2a8ff; }   /* method names */
-.qk-s  { color: #a5d6ff; }   /* strings */
-.qk-n  { color: #f2cc60; }   /* numbers */
-.qk-c  { color: #6e7681; }   /* comments */
-
-/* mapping table */
-.qk-map-section {
-  border-top: 1px solid var(--border);
-  padding: 10px 14px;
-}
-.qk-map-head {
-  font-family: 'Space Mono', monospace; font-size: .6rem;
-  color: var(--gray); text-transform: uppercase; letter-spacing: .1em;
-  margin-bottom: 7px;
-}
-.qk-map-tbl { width: 100%; border-collapse: collapse; font-size: .72rem; }
-.qk-map-tbl th {
-  text-align: left; font-family: 'Space Mono', monospace;
-  font-size: .58rem; color: var(--gray); text-transform: uppercase;
-  letter-spacing: .08em; padding: 3px 8px;
-  border-bottom: 1px solid var(--border);
-}
-.qk-map-tbl td {
-  padding: 5px 8px; color: var(--white);
-  border-bottom: 1px solid rgba(30,37,64,.5);
-  font-size: .72rem;
-}
-.qk-map-tbl tr:last-child td { border-bottom: none; }
-.qk-map-tbl code {
-  font-family: 'Space Mono', monospace; font-size: .68rem;
-  color: var(--violet); background: var(--violet2);
-  padding: 1px 5px; border-radius: 3px;
-}
-.qk-impl { color: var(--teal); font-size: .68rem; }
-
-/* collab button */
-.qk-collab-btn {
-  padding: 8px 14px; border-radius: 6px;
-  border: 1px solid var(--violet); background: var(--violet2);
-  color: var(--violet); font-family: 'DM Sans', sans-serif;
-  font-size: .8rem; font-weight: 500; cursor: pointer;
-  transition: all .15s; letter-spacing: .02em;
-}
-.qk-collab-btn:hover { background: rgba(155,109,255,.2); }
-
-/* ── Execute button (topbar) ── */
-.exec-btn {
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--teal);
-  background: var(--teal2);
-  color: var(--teal);
-  font-family: 'DM Sans', sans-serif;
-  font-size: .8rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all .15s;
-  letter-spacing: .02em;
-}
-.exec-btn:hover { background: rgba(0,212,170,.2); }
-.exec-btn:disabled { opacity: .3; cursor: default; background: transparent; border-color: var(--border); color: var(--gray); }
-
-/* ── Execute overlay panel ── */
-#exec-overlay {
-  position: absolute; inset: 0;
-  background: rgba(10,12,20,.88);
-  z-index: 210; display: none;
-  align-items: flex-start; justify-content: center;
-  padding: 20px; overflow-y: auto;
-}
-#exec-overlay.open { display: flex; }
-#exec-panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  width: 100%; max-width: 600px;
-  flex-shrink: 0; overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0,0,0,.7);
-}
-
-/* execute panel sections */
-.exec-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  padding: 14px 16px 10px; border-bottom: 1px solid var(--border);
-}
-.exec-title-block { flex: 1; }
-.exec-label {
-  font-family: 'Space Mono', monospace; font-size: .6rem; color: var(--gray);
-  text-transform: uppercase; letter-spacing: .12em; margin-bottom: 3px;
-}
-.exec-title { font-size: .95rem; font-weight: 500; color: var(--white); margin-bottom: 2px; }
-.exec-meta  { font-family: 'Space Mono', monospace; font-size: .65rem; color: var(--gray); }
-.exec-close {
-  background: none; border: none; color: var(--gray);
-  font-size: 1.1rem; cursor: pointer; padding: 0 4px; line-height: 1; transition: color .15s;
-}
-.exec-close:hover { color: var(--white); }
-
-/* pipeline steps */
-.exec-pipeline {
-  padding: 12px 14px; border-bottom: 1px solid var(--border);
-  display: flex; gap: 0; align-items: center;
-}
-.exec-pipe-step {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  flex: 1;
-}
-.exec-pipe-dot {
-  width: 28px; height: 28px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: .7rem; font-weight: 700; border: 2px solid var(--border);
-  font-family: 'Space Mono', monospace; color: var(--gray);
-  transition: all .3s;
-}
-.exec-pipe-dot.done  { border-color: var(--teal);   color: var(--teal);   background: var(--teal2); }
-.exec-pipe-dot.active{ border-color: var(--amber);  color: var(--amber);  background: var(--amber2); }
-.exec-pipe-dot.error { border-color: var(--rose);   color: var(--rose);   background: var(--rose2); }
-.exec-pipe-lbl {
-  font-family: 'Space Mono', monospace; font-size: .55rem;
-  color: var(--gray); text-align: center; line-height: 1.3;
-}
-.exec-pipe-arrow { color: var(--border); font-size: .75rem; flex-shrink: 0; margin: 0 2px; padding-bottom: 14px; }
-
-/* backend selector */
-.exec-backends {
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-  display: flex; gap: 8px;
-}
-.exec-backend-btn {
-  flex: 1; padding: 10px 8px; border-radius: 7px;
-  border: 1px solid var(--border); background: var(--card);
-  cursor: pointer; transition: all .15s; text-align: center;
-}
-.exec-backend-btn:hover { border-color: var(--gray); }
-.exec-backend-btn.selected { border-color: var(--teal); background: var(--teal2); }
-.exec-backend-btn.disabled-backend { opacity: .4; cursor: default; }
-.exec-be-name  { font-family: 'Space Mono', monospace; font-size: .72rem; color: var(--white); margin-bottom: 2px; }
-.exec-be-desc  { font-size: .65rem; color: var(--gray); }
-.exec-be-badge {
-  display: inline-block; font-size: .55rem; padding: 1px 6px; border-radius: 20px;
-  margin-top: 4px; font-family: 'Space Mono', monospace;
-}
-.badge-avail  { background: var(--teal2);   color: var(--teal); }
-.badge-queue  { background: var(--amber2);  color: var(--amber); }
-.badge-unavail{ background: var(--rose2);   color: var(--rose); }
-
-/* shots / job status */
-.exec-config {
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-  display: flex; gap: 14px; align-items: center;
-}
-.exec-config-label {
-  font-family: 'Space Mono', monospace; font-size: .65rem; color: var(--gray);
-}
-.exec-shots-input {
-  font-family: 'Space Mono', monospace; font-size: .75rem;
-  background: var(--card); border: 1px solid var(--border);
-  color: var(--white); border-radius: 5px; padding: 4px 8px; width: 80px;
-}
-.exec-shots-input:focus { outline: none; border-color: var(--teal); }
-
-/* results */
-.exec-results {
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-  min-height: 60px; display: none;
-}
-.exec-results.visible { display: block; }
-.exec-results-head {
-  font-family: 'Space Mono', monospace; font-size: .6rem; color: var(--gray);
-  text-transform: uppercase; letter-spacing: .1em; margin-bottom: 8px;
-}
-.exec-bar-row {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
-}
-.exec-bar-state { font-family: 'Space Mono', monospace; font-size: .68rem; color: var(--gray); min-width: 36px; }
-.exec-bar-track { flex: 1; height: 14px; background: var(--card); border-radius: 3px; overflow: hidden; }
-.exec-bar-fill  { height: 100%; border-radius: 3px; transition: width .6s cubic-bezier(.4,0,.2,1); }
-.exec-bar-pct   { font-family: 'Space Mono', monospace; font-size: .65rem; color: var(--white); min-width: 38px; text-align: right; }
-
-/* job log */
-.exec-log {
-  padding: 8px 14px; border-bottom: 1px solid var(--border);
-  font-family: 'Space Mono', monospace; font-size: .65rem; color: var(--gray);
-  max-height: 120px; overflow-y: auto; line-height: 1.8; min-height: 30px;
-}
-.exec-log-line { margin: 0; }
-.exec-log-line.ok   { color: var(--teal); }
-.exec-log-line.warn { color: var(--amber); }
-.exec-log-line.err  { color: var(--rose); }
-
-/* footer */
-.exec-footer {
-  padding: 12px 14px; display: flex; gap: 8px; align-items: center;
-}
-.exec-run-sim-btn {
-  padding: 8px 16px; border-radius: 6px;
-  border: 1px solid var(--teal); background: var(--teal2);
-  color: var(--teal); font-family: 'DM Sans', sans-serif; font-size: .8rem;
-  font-weight: 500; cursor: pointer; transition: all .15s; letter-spacing: .03em;
-}
-.exec-run-sim-btn:hover   { background: rgba(0,212,170,.2); }
-.exec-run-sim-btn:disabled{ opacity:.35; cursor:default; border-color:var(--border); color:var(--gray); background:transparent; }
-.exec-run-hw-btn {
-  padding: 8px 16px; border-radius: 6px;
-  border: 1px solid var(--violet); background: var(--violet2);
-  color: var(--violet); font-family: 'DM Sans', sans-serif; font-size: .8rem;
-  font-weight: 500; cursor: pointer; transition: all .15s; letter-spacing: .03em;
-}
-.exec-run-hw-btn:hover   { background: rgba(155,109,255,.2); }
-.exec-run-hw-btn:disabled{ opacity:.35; cursor:default; border-color:var(--border); color:var(--gray); background:transparent; }
-.exec-cancel-btn {
-  padding: 8px 12px; border-radius: 6px;
-  border: 1px solid var(--border); background: transparent;
-  color: var(--gray); font-family: 'DM Sans', sans-serif; font-size: .8rem;
-  cursor: pointer; transition: all .15s;
-}
-.exec-cancel-btn:hover { border-color: var(--gray); color: var(--white); }
-.exec-save-note { font-family: 'Space Mono', monospace; font-size: .6rem; color: var(--dim); margin-left: auto; }
-
-/* ── QPU cost card ── */
-.exec-qpu-card {
-  margin: 0; border-top: 1px solid var(--border);
-  padding: 12px 14px;
-  background: linear-gradient(135deg, rgba(155,109,255,.06) 0%, rgba(0,212,170,.04) 100%);
-}
-.exec-qpu-card-inner {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-bottom: 8px;
-}
-.exec-qpu-left { flex: 1; }
-.exec-qpu-title {
-  font-size: .85rem; font-weight: 500; color: var(--white); margin-bottom: 3px;
-}
-.exec-qpu-sub {
-  font-family: 'Space Mono', monospace; font-size: .62rem;
-  color: var(--gray); margin-bottom: 6px;
-}
-.exec-qpu-cost { font-size: .8rem; }
-.exec-cost-num  { font-weight: 700; color: var(--amber); font-size: .95rem; }
-.exec-cost-note { font-family: 'Space Mono', monospace; font-size: .65rem; color: var(--gray); }
-.exec-qpu-right { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
-.exec-qpu-confirm {
-  padding: 8px 16px; border-radius: 6px;
-  border: 1px solid var(--violet); background: var(--violet2);
-  color: var(--violet); font-family: 'DM Sans', sans-serif;
-  font-size: .78rem; font-weight: 500; cursor: pointer; transition: all .15s;
-  white-space: nowrap;
-}
-.exec-qpu-confirm:hover:not(:disabled) { background: rgba(155,109,255,.25); }
-.exec-qpu-confirm:disabled { opacity:.35; cursor:default; }
-.exec-qpu-cancel {
-  padding: 6px 16px; border-radius: 6px;
-  border: 1px solid var(--border); background: transparent;
-  color: var(--gray); font-family: 'DM Sans', sans-serif;
-  font-size: .75rem; cursor: pointer; transition: all .15s; text-align: center;
-}
-.exec-qpu-cancel:hover { border-color: var(--gray); color: var(--white); }
-.exec-qpu-warn {
-  font-family: 'Space Mono', monospace; font-size: .62rem;
-  color: var(--amber); opacity: .75; line-height: 1.5;
-}
-
-/* hardware results comparison */
-.exec-hw-results { border-top: 1px solid var(--border); }
-.exec-compare-badge {
-  font-family: 'Space Mono', monospace; font-size: .6rem;
-  background: var(--violet2); color: var(--violet);
-  padding: 1px 7px; border-radius: 20px; margin-left: 8px; vertical-align: middle;
+  const pat=ir.validation.pattern;
+  return {
+    title: patternTitles[pat]||'Quantum Circuit',
+    meta: `${ir.n} qubit${ir.n!==1?'s':''} · ${ir.N.toLocaleString()} states · ${steps.length} steps`,
+    steps,
+    summary: ir.qubits.map(q=>({
+      label:q.label,
+      ops:q.ops.map(o=>o[0].toUpperCase()+o.slice(1)).join(' → ')||'—',
+      state:q.final_state, result:q.result
+    })),
+    patternNote: patternNotes[pat]||'',
+  };
 }
