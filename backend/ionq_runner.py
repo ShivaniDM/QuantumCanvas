@@ -211,6 +211,45 @@ class IonQRunner:
         circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
         return self._submit_job(circuit, shots, "simulator", "qc-ionq-sim")
 
+    def submit_qpu(self, qiskit_code: str, shots: int) -> str:
+        """Submit to actual QPU hardware. User must have confirmed cost."""
+        n       = self._n_qubits(qiskit_code)
+        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+        return self._submit_job(circuit, shots, "qpu.forte-1", "qc-qpu")
+
+    def estimate_cost(self, qiskit_code: str, shots: int) -> dict:
+        """
+        Dry-run to get cost estimate without consuming QPU time.
+        IonQ dry_run returns gate counts and cost_usd without queuing.
+        """
+        n       = self._n_qubits(qiskit_code)
+        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+
+        payload = {
+            "input":   circuit,
+            "shots":   shots,
+            "backend": "qpu.forte-1",
+            "name":    "qc-cost-estimate",
+            "dry_run": True,
+        }
+        self.logger.log("Requesting QPU cost estimate (dry_run=True)")
+
+        resp = self.session.post(
+            self.endpoint + self.JOBS_URL,
+            json=payload,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self.logger.log(f"Cost estimate response: {data}")
+
+        return {
+            "cost_usd":    data.get("cost_usd"),
+            "queue_days":  340,   # forte-1 current estimate
+            "target":      data.get("target", "qpu.forte-1"),
+            "gate_counts": data.get("gate_counts"),
+        }
+
     def get_job_status(self, job_id: str) -> JobStatus:
         """Poll a job and return its current status + counts if ready."""
         resp = self.session.get(

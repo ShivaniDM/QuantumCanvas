@@ -46,6 +46,13 @@ class JobResponse(BaseModel):
     run_id:  str | None  = None
     error:   str | None  = None
 
+class CostResponse(BaseModel):
+    cost_usd:    float | None = None
+    queue_days:  int   | None = None
+    target:      str          = "qpu.forte-1"
+    gate_counts: dict | None  = None
+    error:       str   | None = None
+
 # ── Routes ────────────────────────────────────────────────────────────
 
 @app.post("/execute", response_model=ExecuteResponse)
@@ -76,10 +83,12 @@ async def execute(req: ExecuteRequest):
                 qiskit_code = req.qiskit_py,
                 shots       = req.shots,
             )
-            counts["circuit_hash"] = circuit_hash   # cross-link result to circuit
-            logger.save("results.json", counts)
-            logger.log(f"Simulator complete — {sum(v for k,v in counts.items() if k != 'circuit_hash')} shots")
-            return ExecuteResponse(run_id=run_id, counts=counts)
+            # Save results.json with hash for traceability; return clean counts to frontend
+            results_artifact = dict(counts)
+            results_artifact["circuit_hash"] = circuit_hash
+            logger.save("results.json", results_artifact)
+            logger.log(f"Simulator complete — {sum(counts.values())} shots")
+            return ExecuteResponse(run_id=run_id, counts=counts)   # no hash key in response
 
         elif req.backend == "ionq":
             # Async: submit to IonQ, return job_id for polling
@@ -89,6 +98,16 @@ async def execute(req: ExecuteRequest):
             )
             logger.log(f"IonQ job submitted — job_id={job_id}")
             # Store run_id → job_id mapping for the poll endpoint
+            _job_run_map[job_id] = run_id
+            return ExecuteResponse(run_id=run_id, job_id=job_id)
+
+        elif req.backend == "qpu":
+            # User confirmed QPU run after seeing cost estimate
+            job_id = runner.submit_qpu(
+                qiskit_code = req.qiskit_py,
+                shots       = req.shots,
+            )
+            logger.log(f"QPU job submitted — job_id={job_id}")
             _job_run_map[job_id] = run_id
             return ExecuteResponse(run_id=run_id, job_id=job_id)
 
@@ -131,6 +150,25 @@ async def poll_job(job_id: str):
     except Exception as e:
         logger.error(str(e))
         return JobResponse(job_id=job_id, status="failed", error=str(e), run_id=run_id)
+
+
+@app.post("/cost", response_model=CostResponse)
+async def estimate_cost(req: ExecuteRequest):
+    """
+    Dry-run the circuit on IonQ to get cost + gate count estimate.
+    Uses IonQ's dry_run mode — no QPU time consumed.
+    """
+    logger = ArtifactLogger()
+    try:
+        runner = IonQRunner(
+            api_key  = settings.IONQ_API_KEY,
+            endpoint = settings.IONQ_ENDPOINT,
+            logger   = logger,
+        )
+        cost_info = runner.estimate_cost(req.qiskit_py, req.shots)
+        return CostResponse(**cost_info)
+    except Exception as e:
+        return CostResponse(error=str(e))
 
 
 @app.get("/health")
