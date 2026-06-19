@@ -456,3 +456,54 @@
 }
 .exec-cancel-btn:hover { border-color: var(--gray); color: var(--white); }
 .exec-save-note { font-family: 'Space Mono', monospace; font-size: .6rem; color: var(--dim); margin-left: auto; }
+
+/* ── QPU cost card ── */
+.exec-qpu-card {
+  margin: 0; border-top: 1px solid var(--border);
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(155,109,255,.06) 0%, rgba(0,212,170,.04) 100%);
+}
+.exec-qpu-card-inner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 8px;
+}
+.exec-qpu-left { flex: 1; }
+.exec-qpu-title {
+  font-size: .85rem; font-weight: 500; color: var(--white); margin-bottom: 3px;
+}
+.exec-qpu-sub {
+  font-family: 'Space Mono', monospace; font-size: .62rem;
+  color: var(--gray); margin-bottom: 6px;
+}
+.exec-qpu-cost { font-size: .8rem; }
+.exec-cost-num  { font-weight: 700; color: var(--amber); font-size: .95rem; }
+.exec-cost-note { font-family: 'Space Mono', monospace; font-size: .65rem; color: var(--gray); }
+.exec-qpu-right { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.exec-qpu-confirm {
+  padding: 8px 16px; border-radius: 6px;
+  border: 1px solid var(--violet); background: var(--violet2);
+  color: var(--violet); font-family: 'DM Sans', sans-serif;
+  font-size: .78rem; font-weight: 500; cursor: pointer; transition: all .15s;
+  white-space: nowrap;
+}
+.exec-qpu-confirm:hover:not(:disabled) { background: rgba(155,109,255,.25); }
+.exec-qpu-confirm:disabled { opacity:.35; cursor:default; }
+.exec-qpu-cancel {
+  padding: 6px 16px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--gray); font-family: 'DM Sans', sans-serif;
+  font-size: .75rem; cursor: pointer; transition: all .15s; text-align: center;
+}
+.exec-qpu-cancel:hover { border-color: var(--gray); color: var(--white); }
+.exec-qpu-warn {
+  font-family: 'Space Mono', monospace; font-size: .62rem;
+  color: var(--amber); opacity: .75; line-height: 1.5;
+}
+
+/* hardware results comparison */
+.exec-hw-results { border-top: 1px solid var(--border); }
+.exec-compare-badge {
+  font-family: 'Space Mono', monospace; font-size: .6rem;
+  background: var(--violet2); color: var(--violet);
+  padding: 1px 7px; border-radius: 20px; margin-left: 8px; vertical-align: middle;
+}

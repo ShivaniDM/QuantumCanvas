@@ -195,10 +195,18 @@ class IonQRunner:
             time.sleep(2)
             status = self.get_job_status(job_id)
             self.logger.log(f"Poll {attempt+1}: job={job_id} status={status.status}")
-            if status.is_terminal:
+            if status.status in ("failed", "canceled"):
+                raise RuntimeError(f"IonQ job {status.status}")
+            if status.status in ("completed", "ready"):
                 if status.counts:
                     return status.counts
-                raise RuntimeError(f"Job failed: {status.status}")
+                # counts empty — results endpoint may not be ready yet, retry once
+                self.logger.log(f"Status ready but counts empty — retrying results fetch")
+                time.sleep(2)
+                status = self.get_job_status(job_id)
+                if status.counts:
+                    return status.counts
+                raise RuntimeError(f"Results unavailable after retry for job {job_id}")
 
         raise TimeoutError(f"Simulator job {job_id} did not complete in 120s")
 
@@ -281,9 +289,10 @@ class IonQRunner:
         Fetch results from the dedicated /results endpoint.
         IonQ v0.3: job body has metadata only; counts are at /v0.3/jobs/{id}/results
         Response: {"histogram": {"0": 0.5, "3": 0.5}} (integer state keys, probabilities)
+        Integer key "3" with 2 qubits = "11"; with 3 qubits = "011"
         """
-        job_id = data.get("id", "")
-        n_qubits = data.get("qubits", 2)
+        job_id   = data.get("id", "")
+        n_qubits = data.get("qubits", 2) or 2  # guard against 0/None
 
         try:
             resp = self.session.get(
