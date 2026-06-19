@@ -141,10 +141,9 @@ def _toffoli(a: int, b: int, c: int) -> list[dict]:
 # ── Runner ────────────────────────────────────────────────────────────
 
 class IonQRunner:
-    JOBS_URL   = "/v0.3/jobs"
-    STATUS_URL = "/v0.3/jobs/{job_id}"
-    # IonQ v0.3: results are in the job body under data.results.counts
-    # or data.results.probabilities — no separate endpoint needed
+    JOBS_URL    = "/v0.3/jobs"
+    STATUS_URL  = "/v0.3/jobs/{job_id}"
+    RESULTS_URL = "/v0.3/jobs/{job_id}/results"   # separate endpoint for counts
 
     def __init__(self, api_key: str, endpoint: str, logger: ArtifactLogger):
         self.api_key  = api_key
@@ -204,13 +203,13 @@ class IonQRunner:
         raise TimeoutError(f"Simulator job {job_id} did not complete in 120s")
 
     def submit_hardware(self, qiskit_code: str, shots: int) -> str:
-        """Submit to IonQ hardware (async). Returns job_id for polling."""
+        """Submit to IonQ simulator (async). Returns job_id for polling.
+        NOTE: Using 'simulator' backend — NOT qpu.forte-1 (costs $168/run + 340 day queue).
+        Change backend to 'qpu.forte-1' only when QPU access is confirmed.
+        """
         n       = self._n_qubits(qiskit_code)
         circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
-        # Note: forte-1 has a ~340 day queue. aria-2 is retired.
-        # For demo purposes we target the simulator backend labeled "qpu.forte-1"
-        # — swap to actual QPU name when queue permits.
-        return self._submit_job(circuit, shots, "qpu.forte-1", "qc-hardware")
+        return self._submit_job(circuit, shots, "simulator", "qc-ionq-sim")
 
     def get_job_status(self, job_id: str) -> JobStatus:
         """Poll a job and return its current status + counts if ready."""
@@ -240,35 +239,46 @@ class IonQRunner:
 
     def _extract_counts(self, data: dict, shots: int) -> dict:
         """
-        Extract shot counts from an IonQ job response.
-        IonQ v0.3 embeds results in the job body:
-          data.results         → {"00": 0.5, "11": 0.5}  (probabilities)
-          data.data.counts     → {"00": 500, "11": 500}   (counts, if present)
+        Fetch results from the dedicated /results endpoint.
+        IonQ v0.3: job body has metadata only; counts are at /v0.3/jobs/{id}/results
+        Response: {"histogram": {"0": 0.5, "3": 0.5}} (integer state keys, probabilities)
         """
-        # Try counts first (most direct)
-        nested = data.get("data", {})
-        if isinstance(nested, dict) and "counts" in nested:
-            counts = nested["counts"]
-            self.logger.log(f"Counts from data.counts: {counts}")
-            return {str(k): int(v) for k, v in counts.items()}
+        job_id = data.get("id", "")
+        n_qubits = data.get("qubits", 2)
 
-        # Try probabilities in results field
-        results = data.get("results", {})
-        if results and isinstance(results, dict):
-            counts = {state: round(float(prob) * shots)
-                      for state, prob in results.items()}
-            self.logger.log(f"Counts from results probabilities: {counts}")
-            return counts
+        try:
+            resp = self.session.get(
+                self.endpoint + self.RESULTS_URL.format(job_id=job_id),
+                timeout=15,
+            )
+            resp.raise_for_status()
+            results = resp.json()
+            self.logger.log(f"Results response: {results}")
 
-        # Try top-level probabilities
-        probs = data.get("probabilities", {})
-        if probs and isinstance(probs, dict):
-            counts = {state: round(float(prob) * shots)
-                      for state, prob in probs.items()}
-            self.logger.log(f"Counts from top-level probabilities: {counts}")
-            return counts
+            # IonQ returns histogram with integer keys as strings
+            # e.g. {"histogram": {"0": 0.5, "3": 0.5}}
+            histogram = results.get("histogram", {})
+            if histogram:
+                counts = {}
+                for int_state, prob in histogram.items():
+                    # Convert integer state to binary bitstring
+                    # e.g. "3" with 2 qubits → "11"
+                    bitstring = format(int(int_state), f"0{n_qubits}b")
+                    counts[bitstring] = round(float(prob) * shots)
+                self.logger.log(f"Counts extracted: {counts}")
+                return counts
 
-        # Last resort: log full response so we can see the structure
-        self.logger.error(f"Could not find counts in response: {data}")
+            # Fallback: try direct probabilities dict
+            if isinstance(results, dict) and results:
+                counts = {str(k): round(float(v) * shots)
+                          for k, v in results.items()
+                          if k != "histogram"}
+                if counts:
+                    self.logger.log(f"Counts from flat results: {counts}")
+                    return counts
+
+        except Exception as e:
+            self.logger.error(f"Failed to fetch results for {job_id}: {e}")
+
         return {}
         return counts
