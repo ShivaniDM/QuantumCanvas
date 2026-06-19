@@ -1,7 +1,7 @@
 // QuantumCanvas — Execute panel
 // Flow: IonQ Simulator → visual results → QPU cost card → optional QPU run
 // Backend URL — set to Azure backend
-const BACKEND_URL = 'quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
+const BACKEND_URL = 'https://quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
 
 // ── Panel state ───────────────────────────────────────────────────────
 const execState = {
