@@ -4,7 +4,7 @@
 
 // ── Config ────────────────────────────────────────────────────────────
 // Backend base URL — update if running on a different port
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'https://quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
 
 // ── Execute panel state ───────────────────────────────────────────────
 const execState = {
