@@ -142,8 +142,9 @@ def _toffoli(a: int, b: int, c: int) -> list[dict]:
 
 class IonQRunner:
     JOBS_URL   = "/v0.3/jobs"
-    PROBS_URL  = "/v0.4/jobs/{job_id}/results/probabilities"
     STATUS_URL = "/v0.3/jobs/{job_id}"
+    # IonQ v0.3: results are in the job body under data.results.counts
+    # or data.results.probabilities — no separate endpoint needed
 
     def __init__(self, api_key: str, endpoint: str, logger: ArtifactLogger):
         self.api_key  = api_key
@@ -219,11 +220,16 @@ class IonQRunner:
         )
         resp.raise_for_status()
         data   = resp.json()
+        self.logger.log(f"IonQ job response: {data}")
+
+        # IonQ status values: submitted | ready | running | completed | failed | canceled
+        # Both 'ready' and 'completed' mean results are available
         status = data.get("status", "unknown")
 
         counts = None
         if status in ("completed", "ready"):
-            counts = self._fetch_probabilities(job_id, data.get("shots", 1000))
+            shots  = data.get("shots", 1000)
+            counts = self._extract_counts(data, shots)
 
         return JobStatus(
             job_id       = job_id,
@@ -232,15 +238,37 @@ class IonQRunner:
             raw_response = data,
         )
 
-    def _fetch_probabilities(self, job_id: str, shots: int) -> dict:
-        """Fetch probability histogram and convert to shot counts."""
-        resp = self.session.get(
-            self.endpoint + self.PROBS_URL.format(job_id=job_id),
-            timeout=15,
-        )
-        resp.raise_for_status()
-        probs = resp.json()  # {"00": 0.5, "11": 0.5}
-        # Convert probabilities → counts
-        counts = {state: round(prob * shots) for state, prob in probs.items()}
-        self.logger.log(f"Probabilities fetched: {probs}")
+    def _extract_counts(self, data: dict, shots: int) -> dict:
+        """
+        Extract shot counts from an IonQ job response.
+        IonQ v0.3 embeds results in the job body:
+          data.results         → {"00": 0.5, "11": 0.5}  (probabilities)
+          data.data.counts     → {"00": 500, "11": 500}   (counts, if present)
+        """
+        # Try counts first (most direct)
+        nested = data.get("data", {})
+        if isinstance(nested, dict) and "counts" in nested:
+            counts = nested["counts"]
+            self.logger.log(f"Counts from data.counts: {counts}")
+            return {str(k): int(v) for k, v in counts.items()}
+
+        # Try probabilities in results field
+        results = data.get("results", {})
+        if results and isinstance(results, dict):
+            counts = {state: round(float(prob) * shots)
+                      for state, prob in results.items()}
+            self.logger.log(f"Counts from results probabilities: {counts}")
+            return counts
+
+        # Try top-level probabilities
+        probs = data.get("probabilities", {})
+        if probs and isinstance(probs, dict):
+            counts = {state: round(float(prob) * shots)
+                      for state, prob in probs.items()}
+            self.logger.log(f"Counts from top-level probabilities: {counts}")
+            return counts
+
+        # Last resort: log full response so we can see the structure
+        self.logger.error(f"Could not find counts in response: {data}")
+        return {}
         return counts
