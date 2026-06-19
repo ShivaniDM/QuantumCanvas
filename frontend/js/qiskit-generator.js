@@ -27,6 +27,35 @@ function generateQiskit(ir, doc) {
        `${n} qubit${n>1?'s':''}, ${n} classical bit${n>1?'s':''} for measurement`);
   blank();
 
+  // ── Multi-controlled Z helper ────────────────────────────────────────
+  // Emits a phase flip (-1) on the |11...1⟩ state of the given qubit indices.
+  // n=1: Z gate. n=2: CZ gate (= H·CX·H). n≥3: H on last, CCX ladder, H on last.
+  function _emitMCZ(idxs, emitFn) {
+    // Emit a multi-controlled Z (phase flip on |11...1⟩) for the given qubit indices.
+    // Implementation: H on target · MCX (multi-controlled X) · H on target
+    // This is the standard, general, correct Grover oracle form.
+    const m = idxs.length;
+    if(m === 0) return;
+    if(m === 1) {
+      emitFn(`qc.z(${idxs[0]})`, 'Z = phase flip on |1⟩');
+      return;
+    }
+    const target   = idxs[m-1];
+    const controls = idxs.slice(0, m-1);
+    // H·MCX·H = multi-controlled Z (phase flip on |11...1⟩)
+    emitFn(`qc.h(${target})`, 'MCZ via H·MCX·H');
+    if(m === 2) {
+      emitFn(`qc.cx(${controls[0]}, ${target})`, 'CX (2-qubit case)');
+    } else if(m === 3) {
+      emitFn(`qc.ccx(${controls[0]}, ${controls[1]}, ${target})`, 'CCX (3-qubit case)');
+    } else {
+      // General case: qc.mcx(controls, target)
+      emitFn(`qc.mcx([${controls.join(', ')}], ${target})`,
+             `multi-controlled X on ${m} qubits`);
+    }
+    emitFn(`qc.h(${target})`);
+  }
+
   // ── Walk pseudocode steps ─────────────────────────────────────────────
   let hasUnimplemented = false;
 
@@ -51,53 +80,65 @@ function generateQiskit(ir, doc) {
       }
 
       case 'MARK': {
-        emit(`# MARK ${step.targets.join(', ')} — phase oracle: Z gate flips amplitude sign`);
-        step.targets.forEach(lbl => {
-          const idx = labelToIdx[lbl];
-          if(idx === undefined) return;
-          emit(`qc.z(${idx})`,
-               `${lbl}: |+⟩ → |−⟩  (phase flip, probabilities unchanged)`);
-        });
+        // Proper computational basis phase oracle.
+        // MARK targets one qubit. We treat it as marking the |1⟩ state on that qubit.
+        // For a single-qubit oracle: Z gate is sufficient (marks |1⟩ with phase -1).
+        // For multi-qubit register oracle (all marked qubits = |1⟩):
+        //   flip X on unmarked qubits → apply multi-controlled Z → flip X back.
+        // This isolates exactly the |111...1⟩ basis state in the marked subspace.
+
+        const markedIdxs  = step.targets.map(lbl => labelToIdx[lbl]).filter(i => i !== undefined);
+        const allIdxs     = ir.qubits.map((_,i) => i);
+        const unmarkedIdxs = allIdxs.filter(i => !markedIdxs.includes(i));
+
+        emit(`# MARK ${step.targets.join(', ')} — computational basis oracle`);
+        emit(`# Marks the |${'1'.repeat(markedIdxs.length)}⟩ state of [${step.targets.join(', ')}]`);
+        emit(`# using X·MCZ·X pattern (phase -1 on target basis state only)`);
+
+        if(markedIdxs.length === 1 && n === 1) {
+          // Single qubit: Z marks |1⟩
+          emit(`qc.z(${markedIdxs[0]})`,
+               `${step.targets[0]}: phase -1 on |1⟩ state`);
+        } else if(markedIdxs.length === 1) {
+          // One marked qubit in multi-qubit register
+          // Flip unmarked qubits so all are |1⟩ at target state
+          unmarkedIdxs.forEach(i => emit(`qc.x(${i})`, `flip to align with target basis state`));
+          // Multi-controlled phase flip on all qubits
+          _emitMCZ(allIdxs, emit);
+          // Unflip
+          unmarkedIdxs.forEach(i => emit(`qc.x(${i})`, `restore`));
+        } else {
+          // Multiple marked qubits — oracle marks their joint |11...1⟩
+          unmarkedIdxs.forEach(i => emit(`qc.x(${i})`, `flip unmarked qubit`));
+          _emitMCZ(allIdxs, emit);
+          unmarkedIdxs.forEach(i => emit(`qc.x(${i})`, `restore`));
+        }
         blank();
         break;
       }
 
       case 'BOOST': {
-        // Grover diffusion operator: H X CZ X H on all qubits in register
-        // For a single marked qubit this is: H·X·CZ·X·H (multi-controlled phase)
-        // We emit the full diffusion over the entire register the circuit has seen so far.
-        const boostQubits = ir.qubits.map((_,i)=>i);   // diffusion acts on whole register
-        const boostLabels = ir.qubits.map(q=>q.label).join(', ');
+        // Grover diffusion operator: 2|ψ⟩⟨ψ| - I
+        // Correct implementation: H·X·MCZ·X·H on ALL register qubits.
+        // This reflects about the average amplitude and amplifies the marked state.
+        const allIdxs   = ir.qubits.map((_,i) => i);
+        const allLabels = ir.qubits.map(q => q.label).join(', ');
 
-        emit(`# BOOST — Grover diffusion operator on [${boostLabels}]`);
-        emit(`# Step 1: H on all`);
-        boostQubits.forEach(i => emit(`qc.h(${i})`));
+        emit(`# BOOST — Grover diffusion: 2|ψ⟩⟨ψ| - I on [${allLabels}]`);
+        emit(`# Step 1: H on all — rotate to computational basis`);
+        allIdxs.forEach(i => emit(`qc.h(${i})`));
         blank('');
-        emit(`# Step 2: X on all`);
-        boostQubits.forEach(i => emit(`qc.x(${i})`));
+        emit(`# Step 2: X on all — shift |0...0⟩ to |1...1⟩`);
+        allIdxs.forEach(i => emit(`qc.x(${i})`));
         blank('');
-
-        if(n === 1){
-          emit(`qc.z(0)`, 'single-qubit: Z is the full diffusion');
-        } else if(n === 2){
-          emit(`qc.cz(0, 1)`, 'controlled-Z as the multi-qubit phase kick');
-        } else {
-          // n≥3: multi-controlled Z via CCX decomposition
-          emit(`# Multi-controlled Z (phase kick) — CCX chain`);
-          for(let i = 0; i < n-2; i++){
-            emit(`qc.ccx(${i}, ${i+1}, ${i+2})`);
-          }
-          emit(`qc.z(${n-1})`);
-          for(let i = n-3; i >= 0; i--){
-            emit(`qc.ccx(${i}, ${i+1}, ${i+2})`);
-          }
-        }
+        emit(`# Step 3: multi-controlled phase flip on |1...1⟩`);
+        _emitMCZ(allIdxs, emit);
         blank('');
-        emit(`# Step 3: X on all`);
-        boostQubits.forEach(i => emit(`qc.x(${i})`));
+        emit(`# Step 4: X on all — undo shift`);
+        allIdxs.forEach(i => emit(`qc.x(${i})`));
         blank('');
-        emit(`# Step 4: H on all`);
-        boostQubits.forEach(i => emit(`qc.h(${i})`));
+        emit(`# Step 5: H on all — rotate back`);
+        allIdxs.forEach(i => emit(`qc.h(${i})`));
         blank();
         break;
       }

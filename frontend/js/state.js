@@ -133,10 +133,16 @@ function applyPrimitive(prim, qid){
       invalidFlash(qid); toast('Boost needs superposition — Shake first', 'error'); return;
     }
     // Boost all marked qubits — one user action, shared seq stamp
+    // Unmarked super qubits stay in superposition (diffusion is register-wide but
+    // does not collapse non-marked qubits — they remain coherent).
     const boostSeq = state.nextSeq++;
     state.qubits.forEach(x=>{
       if(x.state==='marked'){x.state='boosted'; x.ops.push({op:'boost', seq:boostSeq});}
-      else if(x.state==='super'){x.state='ground'; x.ops.push({op:'boost-collapsed', seq:boostSeq});}
+      else if(x.state==='super'){
+        // stays super — diffusion acts on whole register but doesn't collapse it
+        x.ops.push({op:'boost', seq:boostSeq});
+      }
+      // ground and entangled qubits are unaffected
     });
     addLog(`▲ Boost → amplitude amplified, marked item dominates`, 'amber');
     toast('Boosted — marked qubit now at high probability', 'valid');
