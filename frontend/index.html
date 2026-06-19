@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuantumCanvas</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/pseudocode.css">
+</head>
+<body>
+<div class="app">
+
+<div class="topbar">
+  <span class="logo">QuantumCanvas</span>
+  <div class="tb-sep"></div>
+  <span class="tb-tag">QA BUILD</span>
+  <span class="tb-tag" style="background:var(--violet2);color:var(--violet)">RULE ENGINE v0.1</span>
+  <div class="tb-status" id="tb-status">
+    <b id="qubit-count">0</b> qubits · select a primitive to begin
+  </div>
+  <button class="run-btn"    id="run-btn"    onclick="runSystem()"           disabled>Run ▶</button>
+  <button class="pc-btn"     id="pc-btn"     onclick="openPseudocodePanel()" disabled>{ } Pseudocode</button>
+  <button class="exec-btn"   id="exec-btn"   onclick="openExecutePanel()"    disabled>Execute ⚡</button>
+</div>
+
+<div class="sidebar" id="sidebar">
+  <div class="tool active" data-tool="select" title="Select / move" onclick="setTool('select')">
+    <span class="tool-sym">↖</span>
+    <span class="tool-lbl">SELECT</span>
+  </div>
+  <div class="tool" data-tool="qubit" title="Place qubit" onclick="setTool('qubit')">
+    <span class="tool-sym">⊕</span>
+    <span class="tool-lbl">QUBIT</span>
+  </div>
+  <div class="tool-sep"></div>
+  <div class="tool" data-prim="shake" title="Shake — superposition" onclick="setTool('shake')">
+    <span class="tool-sym">◎</span>
+    <span class="tool-lbl">SHAKE</span>
+  </div>
+  <div class="tool" data-prim="mark" title="Mark — tag target" onclick="setTool('mark')">
+    <span class="tool-sym">◈</span>
+    <span class="tool-lbl">MARK</span>
+  </div>
+  <div class="tool" data-prim="boost" title="Boost — amplify" onclick="setTool('boost')">
+    <span class="tool-sym">▲</span>
+    <span class="tool-lbl">BOOST</span>
+  </div>
+  <div class="tool" data-prim="link" title="Link — entangle" onclick="setTool('link')">
+    <span class="tool-sym">⋈</span>
+    <span class="tool-lbl">LINK</span>
+  </div>
+  <div class="tool" data-prim="look" title="Look — measure" onclick="setTool('look')">
+    <span class="tool-sym">◙</span>
+    <span class="tool-lbl">LOOK</span>
+  </div>
+  <div class="tool-sep"></div>
+  <div class="tool" title="Clear canvas" onclick="clearCanvas()" style="margin-top:auto">
+    <span class="tool-sym" style="color:var(--gray);font-size:12px">⊘</span>
+    <span class="tool-lbl">CLEAR</span>
+  </div>
+</div>
+
+<div class="canvas-wrap" id="canvas-wrap">
+  <svg id="edge-layer"></svg>
+  <svg id="grid" width="100%" height="100%">
+    <defs>
+      <pattern id="dot-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+        <circle cx="16" cy="16" r="1" fill="#1E2540" opacity=".6"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#dot-grid)"/>
+  </svg>
+  <div id="hint">
+    <div class="hint-sym">⊕</div>
+    <p>Select <b>Qubit</b> tool and click to place qubits</p>
+    <p style="margin-top:4px;font-size:.75rem">Then apply primitives: Shake → Mark → Boost → Look</p>
+  </div>
+  <div id="toast-wrap"></div>
+  <div id="result-panel">
+    <div class="result-title">Measurement result</div>
+    <div class="result-bars" id="result-bars"></div>
+    <div class="result-note" id="result-note"></div>
+    <div class="result-close" onclick="document.getElementById('result-panel').style.display='none'">close</div>
+  </div>
+</div>
+
+<div class="rpanel">
+  <div class="rp-section">
+    <div class="rp-head">Primitives</div>
+    <div class="prim-item" id="pi-shake" onclick="setTool('shake')">
+      <div class="prim-sym" style="background:var(--teal2)"><span style="color:var(--teal)">◎</span></div>
+      <div><div class="prim-name">Shake</div><div class="prim-desc">Spread all possibilities equally</div><div class="prim-req" style="color:var(--teal)">Requires: ground state</div></div>
+    </div>
+    <div class="prim-item" id="pi-mark" onclick="setTool('mark')">
+      <div class="prim-sym" style="background:var(--rose2)"><span style="color:var(--rose)">◈</span></div>
+      <div><div class="prim-name">Mark</div><div class="prim-desc">Tag the target with a hidden signal</div><div class="prim-req" style="color:var(--rose)">Requires: superposition first</div></div>
+    </div>
+    <div class="prim-item" id="pi-boost" onclick="setTool('boost')">
+      <div class="prim-sym" style="background:var(--amber2)"><span style="color:var(--amber)">▲</span></div>
+      <div><div class="prim-name">Boost</div><div class="prim-desc">Amplify the marked item</div><div class="prim-req" style="color:var(--amber)">Requires: marked qubit</div></div>
+    </div>
+    <div class="prim-item" id="pi-link" onclick="setTool('link')">
+      <div class="prim-sym" style="background:var(--violet2)"><span style="color:var(--violet)">⋈</span></div>
+      <div><div class="prim-name">Link</div><div class="prim-desc">Entangle two qubits together</div><div class="prim-req" style="color:var(--violet)">Requires: first qubit shaken</div></div>
+    </div>
+    <div class="prim-item" id="pi-look" onclick="setTool('look')">
+      <div class="prim-sym" style="background:rgba(138,151,180,.1)"><span style="color:var(--gray)">◙</span></div>
+      <div><div class="prim-name">Look</div><div class="prim-desc">Collapse to a definite answer</div><div class="prim-req" style="color:var(--gray)">Terminal — cannot undo</div></div>
+    </div>
+  </div>
+  <div class="rp-section" style="padding-bottom:4px">
+    <div class="rp-head">System log</div>
+  </div>
+  <div id="state-log"><div class="log-entry" style="opacity:.4">— canvas empty —</div></div>
+</div>
+
+<div class="statusbar">
+  <span class="sb-item">tool: <b id="sb-tool">select</b></span>
+  <span class="sb-item">qubits: <b id="sb-qubits">0</b></span>
+  <span class="sb-item">valid sequences: <b id="sb-valid" style="color:var(--teal)">0</b></span>
+  <span class="sb-item" style="margin-left:auto;font-size:.65rem;opacity:.5">click canvas to place · click qubit to apply primitive · drag to move in select mode</span>
+</div>
+
+</div><!-- /.app -->
+
+<!-- Pseudocode / Qiskit overlay panel -->
+<div id="pc-overlay" onclick="pcOverlayClick(event)"><div id="pc-panel"></div></div>
+
+<!-- Execute overlay panel -->
+<div id="exec-overlay" onclick="execOverlayClick(event)"><div id="exec-panel"></div></div>
+
+<!-- JS modules — load order matters -->
+<script src="js/state.js"></script>
+<script src="js/ir.js"></script>
+<script src="js/pseudocode.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/qiskit-generator.js"></script>
+<script src="js/qiskit-panel.js"></script>
+<script src="js/execute.js"></script>
+
+</body>
+</html>

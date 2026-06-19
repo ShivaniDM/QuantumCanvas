@@ -1,0 +1,20 @@
+# QuantumCanvas — .gitignore
+
+# NEVER commit API keys
+.env
+
+# Runtime artifacts — too large/sensitive for git
+logs/
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
