@@ -10,7 +10,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # IonQ credentials — loaded from .env, never committed to git
-    IONQ_API_KEY:  str = ""
+    IONQ_API_KEY:  str = "${{ IONQ_API_KEY }}"
     IONQ_ENDPOINT: str = "https://api.ionq.co"
 
     # Logging
