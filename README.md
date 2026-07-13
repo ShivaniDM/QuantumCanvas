@@ -137,3 +137,6 @@ Use `simulator` for all development and QA.
 
 ## Acknowledgements
 This effort is supported via compute credits from Qollab and IonQ.
+
+## License
+Released under the MIT License. See [LICENSE](LICENSE) for details.
