@@ -134,3 +134,6 @@ Every run saves:
 | `qpu.aria-1/2` | Retired |
 
 Use `simulator` for all development and QA.
+
+## Acknowledgements
+This effort is supported via compute credits from Qollab and IonQ.
