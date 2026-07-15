@@ -1,7 +1,14 @@
 // QuantumCanvas — Execute panel
-// Flow: IonQ Simulator → visual results → QPU cost card → optional QPU run
-// Backend URL — set to Azure backend
-const BACKEND_URL = 'https://quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
+// Backends: Aer simulator (local qiskit) · IonQ simulator · IonQ hardware (QPU).
+// Simulators run straight to results. Hardware requires a dry-run cost estimate
+// and explicit confirmation before it is submitted.
+//
+// Backend URL — use the local dev server when the page is served from
+// localhost (so the new Aer backend can be tested), otherwise the Azure host.
+const BACKEND_URL =
+  (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? 'http://localhost:8000'
+    : 'https://quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
 
 // ── Panel state ───────────────────────────────────────────────────────
 const execState = {
@@ -68,26 +75,26 @@ function _renderExecPanel(ir, doc, qiskit) {
 
   <!-- Simulator results -->
   <div class="exec-results" id="exec-results">
-    <div class="exec-results-head" id="exec-results-head">IonQ Simulator Results</div>
+    <div class="exec-results-head" id="exec-results-head">Simulator Results</div>
     <div id="exec-bars"></div>
   </div>
 
-  <!-- QPU cost card — shown after simulator run -->
+  <!-- QPU cost card — shown only for the IonQ Hardware flow, before submitting -->
   <div class="exec-qpu-card" id="exec-qpu-card" style="display:none">
     <div class="exec-qpu-card-inner">
       <div class="exec-qpu-left">
-        <div class="exec-qpu-title">Run on QPU?</div>
+        <div class="exec-qpu-title">Run on IonQ Hardware?</div>
         <div class="exec-qpu-sub" id="exec-qpu-sub">forte-1 · trapped ion · real hardware</div>
         <div class="exec-qpu-cost" id="exec-qpu-cost">Fetching cost estimate…</div>
       </div>
       <div class="exec-qpu-right">
         <button class="exec-qpu-confirm" id="exec-qpu-confirm"
-                onclick="execRunQPU()" disabled>Run on QPU ⚡</button>
-        <button class="exec-qpu-cancel" onclick="execDismissQPU()">Not now</button>
+                onclick="execRunQPU()" disabled>Proceed — Run on Hardware ⚡</button>
+        <button class="exec-qpu-cancel" onclick="execDismissQPU()">Cancel</button>
       </div>
     </div>
     <div class="exec-qpu-warn">
-      ⚠ QPU jobs enter a queue and may take days. Results will appear when ready.
+      ⚠ This runs on real hardware and costs money. QPU jobs enter a queue and may take days.
     </div>
   </div>
 
@@ -100,12 +107,16 @@ function _renderExecPanel(ir, doc, qiskit) {
   </div>
 
   <div class="exec-log" id="exec-log">
-    <p class="exec-log-line">Ready — click Run to execute on IonQ simulator.</p>
+    <p class="exec-log-line">Ready — choose a backend to execute.</p>
   </div>
 
   <div class="exec-footer">
-    <button class="exec-run-sim-btn" id="exec-run-sim"
-            onclick="execRunSimulator()">⚡ Run IonQ Simulator</button>
+    <button class="exec-run-sim-btn" id="exec-run-aer"
+            onclick="execRunSimulator('aer')">⚡ Aer Simulator</button>
+    <button class="exec-run-sim-btn" id="exec-run-ionq"
+            onclick="execRunSimulator('ionq')">⚡ IonQ Simulator</button>
+    <button class="exec-run-hw-btn" id="exec-run-hw"
+            onclick="execRunHardware()">🖥 IonQ Hardware</button>
     <button class="exec-cancel-btn" onclick="closeExecutePanel()">Close</button>
     <span class="exec-save-note">Artifacts saved to logs/</span>
   </div>`;
@@ -136,16 +147,26 @@ function _buildPayload(backend) {
   };
 }
 
-// ── Step 1: Run simulator ─────────────────────────────────────────────
-async function execRunSimulator() {
+// ── Enable/disable all run buttons together ───────────────────────────
+function _setRunButtonsDisabled(disabled) {
+  ['exec-run-aer', 'exec-run-ionq', 'exec-run-hw'].forEach(id => {
+    const b = document.getElementById(id);
+    if(b) b.disabled = disabled;
+  });
+}
+
+// ── Run a simulator backend ('aer' or 'ionq') — no cost, straight to results
+async function execRunSimulator(backend) {
+  const label = backend === 'aer' ? 'Aer' : 'IonQ';
+  execState.lastBackend = backend;
   execState.simResults = null;
   document.getElementById('exec-qpu-card').style.display = 'none';
   document.getElementById('exec-hw-results').style.display = 'none';
-  document.getElementById('exec-run-sim').disabled = true;
+  _setRunButtonsDisabled(true);
   _setPipeStep(1);
 
   const shots = parseInt(document.getElementById('exec-shots')?.value) || 1000;
-  execLog(`⚡ Running IonQ simulator — ${shots} shots`, 'ok');
+  execLog(`⚡ Running ${label} simulator — ${shots} shots`, 'ok');
   execLog('  Submitting circuit…');
   _setPipeStep(2);
 
@@ -153,27 +174,41 @@ async function execRunSimulator() {
     const resp = await fetch(`${BACKEND_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(_buildPayload('ionq')),
+      body: JSON.stringify(_buildPayload(backend)),
     });
     if(!resp.ok) throw new Error(`Backend ${resp.status}: ${await resp.text()}`);
     const data = await resp.json();
 
-    if(data.job_id) {
+    if(data.counts) {
+      // Aer returns synchronously
+      _setPipeStep(4);
+      _onSimResults(data.counts, data.run_id);
+    } else if(data.job_id) {
+      // IonQ simulator is async — poll
       execState.runId = data.run_id;
       execLog(`  Job submitted: ${data.job_id}`, 'ok');
       _setPipeStep(3);
       _pollSimJob(data.job_id);
-    } else if(data.counts) {
-      _setPipeStep(4);
-      _onSimResults(data.counts, data.run_id);
     } else {
       throw new Error('Unexpected response from backend.');
     }
   } catch(e) {
     _setPipeStep(5);
     execLog(`✖ ${e.message}`, 'err');
-    document.getElementById('exec-run-sim').disabled = false;
+    _setRunButtonsDisabled(false);
   }
+}
+
+// ── IonQ Hardware — dry-run cost estimate first, then require confirmation
+async function execRunHardware() {
+  execState.lastBackend = 'qpu';
+  document.getElementById('exec-hw-results').style.display = 'none';
+  const card = document.getElementById('exec-qpu-card');
+  card.style.display = 'block';
+  document.getElementById('exec-qpu-cost').textContent = 'Fetching cost estimate…';
+  document.getElementById('exec-qpu-confirm').disabled = true;
+  execLog('🖥 IonQ Hardware selected — running dry-run cost estimate (no charge yet)…', 'warn');
+  await _fetchQPUCost();
 }
 
 // ── Poll simulator job ────────────────────────────────────────────────
@@ -185,7 +220,7 @@ function _pollSimJob(jobId) {
       clearInterval(execState.polling); execState.polling = null;
       execLog('✖ Timeout waiting for simulator result', 'err');
       _setPipeStep(5);
-      document.getElementById('exec-run-sim').disabled = false;
+      _setRunButtonsDisabled(false);
       return;
     }
     try {
@@ -193,44 +228,57 @@ function _pollSimJob(jobId) {
       if(!resp.ok) throw new Error(`Poll ${resp.status}`);
       const data = await resp.json();
       execLog(`  Status: ${data.status} (${attempts*3}s)`);
-      if(data.status === 'completed' || data.status === 'ready') {
+      // v0.4: only 'completed' means results are ready. 'ready'/'started'/
+      // 'submitted' are intermediate - keep polling through them.
+      if(data.status === 'completed') {
         clearInterval(execState.polling); execState.polling = null;
         _setPipeStep(4);
         _onSimResults(data.counts, data.run_id || execState.runId);
-      } else if(data.status === 'failed' || data.status === 'canceled') {
+      } else if(data.status === 'failed' || data.status === 'canceled' || data.status === 'cancelled') {
         clearInterval(execState.polling); execState.polling = null;
         _setPipeStep(5);
         execLog(`✖ Job ${data.status}: ${data.error||''}`, 'err');
-        document.getElementById('exec-run-sim').disabled = false;
+        _setRunButtonsDisabled(false);
       }
     } catch(e) { execLog(`  Poll error: ${e.message}`, 'warn'); }
   }, 3000);
 }
 
-// ── Simulator results → show visually → fetch QPU cost ───────────────
+// ── Simulator results → show visually ────────────────────────────────
 function _onSimResults(counts, runId) {
   execState.simResults = counts;
   const shots = parseInt(document.getElementById('exec-shots')?.value) || 1000;
   const panel  = document.getElementById('exec-panel');
   const nQubits = panel?._ir?.n || 1;
-  // Normalise keys (integer → bitstring) and strip non-numeric entries
-  const clean = _normaliseCounts(counts, nQubits);
-  const total = Object.values(clean).reduce((a,b) => a+b, 0) || shots;
-
-  _renderBars('exec-bars', clean, total, 'var(--teal)');
+  const label = execState.lastBackend === 'aer' ? 'Aer' : 'IonQ';
 
   document.getElementById('exec-results').classList.add('visible');
-  document.getElementById('exec-results-head').textContent = 'IonQ Simulator Results';
+  document.getElementById('exec-results-head').textContent = `${label} Simulator Results`;
 
+  // Normalise keys (integer → bitstring) and strip non-numeric entries
+  const clean = _normaliseCounts(counts, nQubits);
+  const total = Object.values(clean).reduce((a,b) => a+b, 0);
+
+  // Empty counts → make it visible rather than a silent blank panel.
+  if(!total) {
+    document.getElementById('exec-bars').innerHTML =
+      `<div style="opacity:.75;font-size:.72rem;padding:6px 0">`
+      + `${label} returned no counts. Backend responded but the histogram was empty — `
+      + `check logs/${runId || '…'}/ionq_results_raw.json for the raw IonQ response.</div>`;
+    execLog(`⚠ ${label} simulator returned no counts (empty histogram).`, 'warn');
+    if(runId) execLog(`  See logs/${runId}/ionq_results_raw.json`);
+    _setRunButtonsDisabled(false);
+    return;
+  }
+
+  _renderBars('exec-bars', clean, total, 'var(--teal)');
   const top = Object.entries(clean).sort((a,b)=>b[1]-a[1])[0];
   const topPct = top ? (top[1]/total*100).toFixed(1) : '?';
-  execLog(`✓ Simulator done — ${total} shots · top: |${top?.[0]}⟩ (${topPct}%)`, 'ok');
+  execLog(`✓ ${label} simulator done — ${total} shots · top: |${top?.[0]}⟩ (${topPct}%)`, 'ok');
   if(runId) execLog(`  Artifacts saved to logs/${runId}/`);
 
-  document.getElementById('exec-run-sim').disabled = false;
-
-  // Now fetch QPU cost estimate and show card
-  _fetchQPUCost();
+  _setRunButtonsDisabled(false);
+  // Simulators do not show a cost card — that is reserved for IonQ Hardware.
 }
 
 // ── Step 2: Fetch QPU cost and show card ──────────────────────────────
@@ -244,30 +292,57 @@ async function _fetchQPUCost() {
     const resp = await fetch(`${BACKEND_URL}/cost`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(_buildPayload('ionq')),
+      body: JSON.stringify(_buildPayload('qpu')),
     });
-    if(!resp.ok) throw new Error(`${resp.status}`);
+    if(!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
     const data = await resp.json();
+    if(data.error) throw new Error(data.error);
 
-    const cost     = data.cost_usd   ? `$${data.cost_usd.toFixed(2)}` : 'unknown';
-    const queue    = data.queue_days ? `~${data.queue_days} day queue` : 'queue unknown';
-    const target   = data.target     || 'qpu.forte-1';
-    const gate1q   = data.gate_counts?.['1q'] ?? '?';
-    const gate2q   = data.gate_counts?.['2q'] ?? '?';
+    const cost   = (data.cost_usd != null) ? `$${Number(data.cost_usd).toFixed(2)}` : 'not returned';
+    const queue  = data.queue_days ? `~${data.queue_days} day queue` : 'queue unknown';
+    const target = data.target || 'qpu.forte-1';
+    const status = data.status || 'unknown';
+    const pet    = (data.predicted_execution_time != null)
+                     ? ` · ~${data.predicted_execution_time}s runtime` : '';
+    const gates  = _fmtGateCounts(data.gate_counts);
 
     document.getElementById('exec-qpu-sub').textContent =
-      `${target} · ${gate1q} single-qubit gates · ${gate2q} two-qubit gates`;
+      `${target} · status: ${status}${gates ? ' · ' + gates : ''}`;
     document.getElementById('exec-qpu-cost').innerHTML =
-      `<span class="exec-cost-num">${cost}</span> <span class="exec-cost-note">estimated · ${queue}</span>`;
+      `<span class="exec-cost-num">${cost}</span> `
+      + `<span class="exec-cost-note">estimated · ${queue}${pet}</span>`
+      + _rawBlock('IonQ estimate response', data.raw ?? data);
     document.getElementById('exec-qpu-confirm').disabled = false;
-    execLog(`  QPU cost estimate: ${cost} · ${queue}`, 'warn');
+    execLog(`  QPU cost estimate: ${cost} · status=${status} · ${queue}`, 'warn');
 
   } catch(e) {
     document.getElementById('exec-qpu-cost').innerHTML =
-      `<span style="color:var(--gray)">Cost estimate unavailable (${e.message})</span>`;
+      `<span style="color:var(--gray)">Cost estimate unavailable (${_h(e.message)})</span>`;
     document.getElementById('exec-qpu-confirm').disabled = false;
     execLog(`  QPU cost estimate unavailable: ${e.message}`, 'warn');
   }
+}
+
+// Format IonQ gate_counts (shape can vary: {"1q":N,"2q":M} or a number).
+function _fmtGateCounts(gc){
+  if(gc == null) return '';
+  if(typeof gc === 'object'){
+    const parts = Object.entries(gc).map(([k,v]) => `${v} ${k}`);
+    return parts.length ? `gates: ${parts.join(', ')}` : '';
+  }
+  return `gates: ${gc}`;
+}
+
+// Collapsible raw-JSON viewer so every field IonQ returns is visible.
+function _rawBlock(label, obj){
+  if(obj == null) return '';
+  let json;
+  try { json = JSON.stringify(obj, null, 2); } catch(_) { json = String(obj); }
+  return `<details style="margin-top:8px">`
+    + `<summary style="cursor:pointer;font-family:'Space Mono',monospace;font-size:.62rem;color:var(--gray)">${_h(label)} — raw JSON</summary>`
+    + `<pre style="max-height:220px;overflow:auto;background:rgba(0,0,0,.25);border:1px solid var(--border);`
+    + `border-radius:6px;padding:8px;margin-top:6px;font-size:.62rem;color:var(--gray);white-space:pre-wrap">`
+    + `${_h(json)}</pre></details>`;
 }
 
 function execDismissQPU() {
@@ -275,33 +350,49 @@ function execDismissQPU() {
   execLog('  QPU run skipped.');
 }
 
-// ── Step 3: Run QPU (user confirmed) ─────────────────────────────────
+// ── Step 3: Run on real hardware (user confirmed) ────────────────────
 async function execRunQPU() {
+  const shots = parseInt(document.getElementById('exec-shots')?.value) || 1000;
+  const costEl = document.getElementById('exec-qpu-cost');
+  const costTxt = costEl ? costEl.textContent.trim() : '';
+
+  // Explicit guard — this is a REAL charge on real hardware. Also serves as a
+  // visible signal that the click reached this handler.
+  if(!window.confirm(
+      `This submits a REAL job to IonQ qpu.forte-1.\n\n`
+    + `Estimated cost: ${costTxt || 'see the card'}\n`
+    + `Shots: ${shots}\n\n`
+    + `It charges real money and enters a multi-day queue. Continue?`)) {
+    execLog('  Hardware run cancelled at confirmation.', 'warn');
+    return;
+  }
+
   document.getElementById('exec-qpu-confirm').disabled = true;
   document.getElementById('exec-qpu-cancel').disabled  = true;
-  execLog('⚡ Submitting to QPU (forte-1)…', 'ok');
+
+  const payload = _buildPayload('qpu');   // backend='qpu' → submit_qpu → qpu.forte-1
+  execLog(`⚡ Submitting REAL hardware job → POST ${BACKEND_URL}/execute (backend=qpu, shots=${shots})`, 'ok');
 
   try {
-    const payload = _buildPayload('ionq');
-    payload.backend = 'qpu';   // tells backend to use qpu.forte-1
-
     const resp = await fetch(`${BACKEND_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if(!resp.ok) throw new Error(`Backend ${resp.status}: ${await resp.text()}`);
-    const data = await resp.json();
+    const text = await resp.text();                    // read once, keep body for errors
+    if(!resp.ok) throw new Error(`Backend ${resp.status}: ${text}`);
+    const data = JSON.parse(text);
 
     if(data.job_id) {
-      execLog(`  QPU job submitted: ${data.job_id}`, 'ok');
-      execLog(`  Job is queued — polling every 30s. Leave this open or check back later.`, 'warn');
+      execLog(`  ✓ Hardware job accepted by IonQ: ${data.job_id}`, 'ok');
+      execLog(`  Queued on forte-1 — polling every 30s. This can take days.`, 'warn');
       _pollQPUJob(data.job_id);
     } else {
-      throw new Error('No job ID returned from backend.');
+      throw new Error(`No job_id in response: ${text}`);
     }
   } catch(e) {
-    execLog(`✖ QPU submit failed: ${e.message}`, 'err');
+    // e.message now carries IonQ's real reason (e.g. insufficient credits / access)
+    execLog(`✖ Hardware submit rejected: ${e.message}`, 'err');
     document.getElementById('exec-qpu-confirm').disabled = false;
     document.getElementById('exec-qpu-cancel').disabled  = false;
   }
@@ -326,35 +417,56 @@ function _pollQPUJob(jobId) {
       const data = await resp.json();
       execLog(`  QPU status: ${data.status} (${attempts*30}s elapsed)`);
 
-      if(data.status === 'completed' || data.status === 'ready') {
+      if(data.status === 'completed') {
         clearInterval(execState.polling); execState.polling = null;
-        _onQPUResults(data.counts, data.run_id);
-      } else if(data.status === 'failed' || data.status === 'canceled') {
+        _onQPUResults(data.counts, data.run_id, data.raw);
+      } else if(data.status === 'failed' || data.status === 'canceled' || data.status === 'cancelled') {
         clearInterval(execState.polling); execState.polling = null;
         execLog(`✖ QPU job ${data.status}`, 'err');
+        _onQPUResults(null, data.run_id, data.raw);   // still show what IonQ returned
       }
     } catch(e) { execLog(`  Poll error: ${e.message}`, 'warn'); }
   }, 30000);
 }
 
-// ── QPU results — show alongside simulator ────────────────────────────
-function _onQPUResults(counts, runId) {
-  if(!counts || !Object.keys(counts).length) {
-    execLog('✖ QPU returned no counts.', 'err'); return;
-  }
-  const panel   = document.getElementById('exec-panel');
-  const nQubits = panel?._ir?.n || 1;
-  const clean   = _normaliseCounts(counts, nQubits);
-  const total   = Object.values(clean).reduce((a,b)=>a+b,0);
-
+// ── QPU results — show counts (if any) + all hardware metadata IonQ returned
+function _onQPUResults(counts, runId, raw) {
   const hwDiv = document.getElementById('exec-hw-results');
   hwDiv.style.display = 'block';
-  _renderBars('exec-hw-bars', clean, total, 'var(--violet)');
 
-  const top = Object.entries(clean).sort((a,b)=>b[1]-a[1])[0];
-  execLog(`✓ QPU done — ${total} shots · top: |${top?.[0]}⟩ (${top?((top[1]/total*100).toFixed(1)):'?'}%)`, 'ok');
+  const panel   = document.getElementById('exec-panel');
+  const nQubits = panel?._ir?.n || 1;
+  const clean   = counts ? _normaliseCounts(counts, nQubits) : {};
+  const total   = Object.values(clean).reduce((a,b)=>a+b,0);
+
+  if(total) {
+    _renderBars('exec-hw-bars', clean, total, 'var(--violet)');
+    const top = Object.entries(clean).sort((a,b)=>b[1]-a[1])[0];
+    execLog(`✓ QPU done — ${total} shots · top: |${top?.[0]}⟩ (${top?((top[1]/total*100).toFixed(1)):'?'}%)`, 'ok');
+  } else {
+    document.getElementById('exec-hw-bars').innerHTML =
+      `<div style="opacity:.7;font-size:.72rem;padding:4px 0">No measurement counts returned — see hardware response below.</div>`;
+    execLog('  QPU returned no counts (showing raw hardware response).', 'warn');
+  }
+
+  // Surface every metadata field IonQ sent back for a real hardware job.
+  if(raw && typeof raw === 'object') {
+    const keys = ['status','target','qubits','shots','execution_time',
+                  'predicted_execution_time','cost_usd','request','response',
+                  'results_url','warning','failure'];
+    const rows = keys
+      .filter(k => raw[k] != null && raw[k] !== '')
+      .map(k => `<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0;font-size:.66rem">`
+              + `<span style="color:var(--gray)">${k}</span>`
+              + `<b style="color:var(--white);text-align:right;word-break:break-all">`
+              + `${_h(typeof raw[k]==='object' ? JSON.stringify(raw[k]) : String(raw[k]))}</b></div>`)
+      .join('');
+    document.getElementById('exec-hw-bars').insertAdjacentHTML('beforeend',
+      `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">${rows}</div>`
+      + _rawBlock('IonQ hardware job', raw));
+  }
+
   if(runId) execLog(`  QPU artifacts saved to logs/${runId}/`);
-
   document.getElementById('exec-qpu-card').style.display = 'none';
 }
 
@@ -362,6 +474,7 @@ function _onQPUResults(counts, runId) {
 // Normalise IonQ integer state keys ("0","1","2","3") → bitstrings ("00","01","10","11")
 function _normaliseCounts(counts, nQubits) {
   const normalised = {};
+  if(!counts || typeof counts !== 'object') return normalised;   // null-safe
   for(const [key, val] of Object.entries(counts)) {
     if(key === 'circuit_hash') continue;
     const n = Number(val);
