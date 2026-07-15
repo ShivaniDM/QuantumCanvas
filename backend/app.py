@@ -8,6 +8,7 @@ Routes:
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Any
 import uvicorn
 
 from config      import settings
@@ -45,20 +46,32 @@ class JobResponse(BaseModel):
     counts:  dict | None = None
     run_id:  str | None  = None
     error:   str | None  = None
+    raw:     dict | None = None   # full IonQ job object (hardware metadata)
 
 class CostResponse(BaseModel):
-    cost_usd:    float | None = None
-    queue_days:  int   | None = None
-    target:      str          = "qpu.forte-1"
-    gate_counts: dict | None  = None
-    error:       str   | None = None
+    cost_usd:                  float | None = None
+    queue_days:                int   | None = None
+    target:                    str          = "qpu.forte-1"
+    gate_counts:               Any          = None   # shape varies by IonQ version
+    predicted_execution_time:  float | None = None
+    status:                    str   | None = None
+    raw:                       dict  | None = None   # full IonQ estimate response
+    error:                     str   | None = None
+
+# Friendly log-folder labels per backend (folders are <timestamp>_<LABEL>).
+_RUN_LABEL = {
+    "aer":       "AER",
+    "simulator": "IONQ_SIM",
+    "ionq":      "IONQ_SIM",
+    "qpu":       "IONQ_HARDWARE",
+}
 
 # ── Routes ────────────────────────────────────────────────────────────
 
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest):
     logger = ArtifactLogger()
-    run_id = logger.new_run(req.backend)
+    run_id = logger.new_run(_RUN_LABEL.get(req.backend, req.backend))
 
     try:
         # Save all input artifacts immediately
@@ -70,6 +83,17 @@ async def execute(req: ExecuteRequest):
         # Compute circuit hash + git commit; writes metadata.json and circuit_hash.txt
         circuit_hash = logger.save_metadata(req.ir_json, req.backend, req.shots)
         logger.log(f"Run {run_id} started — backend={req.backend} shots={req.shots} hash={circuit_hash[:12]}…")
+
+        # Local Qiskit Aer simulator — runs the generated circuit in-process
+        # and returns an exact histogram synchronously. No IonQ / API key needed.
+        if req.backend == "aer":
+            from aer_runner import run_aer
+            counts = run_aer(req.qiskit_py, req.shots, logger=logger)
+            results_artifact = dict(counts)
+            results_artifact["circuit_hash"] = circuit_hash
+            logger.save("results.json", results_artifact)
+            logger.log(f"Aer simulator complete — {sum(counts.values())} shots")
+            return ExecuteResponse(run_id=run_id, counts=counts)
 
         runner = IonQRunner(
             api_key    = settings.IONQ_API_KEY,
@@ -91,8 +115,8 @@ async def execute(req: ExecuteRequest):
             return ExecuteResponse(run_id=run_id, counts=counts)   # no hash key in response
 
         elif req.backend == "ionq":
-            # Async: submit to IonQ, return job_id for polling
-            job_id = runner.submit_hardware(
+            # Async: submit to the IonQ cloud simulator, return job_id for polling
+            job_id = runner.submit_ionq_sim(
                 qiskit_code = req.qiskit_py,
                 shots       = req.shots,
             )
@@ -145,6 +169,7 @@ async def poll_job(job_id: str):
             status = status.status,
             counts = status.counts,
             run_id = run_id,
+            raw    = status.raw_response,
         )
 
     except Exception as e:
@@ -159,15 +184,25 @@ async def estimate_cost(req: ExecuteRequest):
     Uses IonQ's dry_run mode — no QPU time consumed.
     """
     logger = ArtifactLogger()
+    run_id = logger.new_run("IONQ_HARDWARE_ESTIMATE")   # dry-run gets its own log folder
     try:
+        logger.save("canvas.json",    req.canvas_json)
+        logger.save("ir.json",        req.ir_json)
+        logger.save("qiskit.py",      req.qiskit_py)
+        logger.save_metadata(req.ir_json, "qpu-estimate", req.shots)
+        logger.log(f"Run {run_id} started — dry-run cost estimate for qpu.forte-1")
+
         runner = IonQRunner(
             api_key  = settings.IONQ_API_KEY,
             endpoint = settings.IONQ_ENDPOINT,
             logger   = logger,
         )
         cost_info = runner.estimate_cost(req.qiskit_py, req.shots)
+        logger.log(f"Estimate resolved — cost_usd={cost_info.get('cost_usd')} "
+                   f"status={cost_info.get('status')}")
         return CostResponse(**cost_info)
     except Exception as e:
+        logger.error(str(e))
         return CostResponse(error=str(e))
 
 
