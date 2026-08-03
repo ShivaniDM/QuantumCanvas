@@ -28,8 +28,16 @@ def _get_collection():
     if not settings.MONGODB_URI:
         return None
     try:
+        import certifi
         from pymongo import MongoClient
-        _client = MongoClient(settings.MONGODB_URI, serverSelectionTimeoutMS=5000)
+        # tlsCAFile=certifi.where() — containerized hosts (e.g. Azure App
+        # Service) often ship an OpenSSL/CA store that fails the TLS
+        # handshake with Atlas; certifi's bundled, up-to-date CA certs fix it.
+        _client = MongoClient(
+            settings.MONGODB_URI,
+            serverSelectionTimeoutMS=5000,
+            tlsCAFile=certifi.where(),
+        )
         _client.admin.command("ping")   # fail fast if the URI/credentials are bad
         _collection = _client["quantumcanvas"]["runs"]
     except Exception as e:

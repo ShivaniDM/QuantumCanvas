@@ -14,3 +14,4 @@ qiskit-aer>=0.17.0
 # Optional MongoDB Atlas mirror (see mongo_logger.py) — only used if
 # MONGODB_URI is set in .env.
 pymongo>=4.6.0
+certifi>=2024.2.2
