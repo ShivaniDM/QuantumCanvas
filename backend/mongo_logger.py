@@ -16,15 +16,18 @@ from config import settings
 
 _client = None
 _collection = None
-_tried = False
 
 
 def _get_collection():
-    """Lazily connect on first use; cache the result (including failures)."""
-    global _client, _collection, _tried
-    if _tried:
+    """
+    Lazily connect on first use; cache only a SUCCESSFUL connection. A
+    failure (e.g. a transient network/allowlist issue) is never cached — the
+    next call retries from scratch, so a fix on the Mongo/network side takes
+    effect immediately without needing to restart the app.
+    """
+    global _client, _collection
+    if _collection is not None:
         return _collection
-    _tried = True
     if not settings.MONGODB_URI:
         return None
     try:
