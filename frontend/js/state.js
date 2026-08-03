@@ -256,27 +256,6 @@ function showResult(qid, result){
   panel.style.display = 'block';
 }
 
-function runSystem(){
-  // auto-run Grover if we have Shake+Mark+Boost path
-  const boosted = state.qubits.filter(q=>q.state==='boosted');
-  if(boosted.length > 0){
-    addLog(`▶ Run — executing Grover sequence`, 'teal');
-    addLog(`  50 samples · 1 iteration · 0.021s`, 'teal');
-    const runSeq = state.nextSeq++;
-    boosted.forEach(q=>{
-      q.state='measured'; q.result='1'; q.ops.push({op:'look', seq:runSeq, auto:true});
-    });
-    state.qubits.filter(q=>q.state==='super').forEach(q=>{
-      q.state='measured'; q.result='0'; q.ops.push({op:'look', seq:runSeq + 0.1, auto:true});
-    });
-    showResult(boosted[0].id, '1');
-    renderAll();
-    toast('Run complete — result mapped back to canvas', 'valid');
-    return;
-  }
-  toast('Apply Shake → Mark → Boost first, then Run', 'warn');
-}
-
 function invalidFlash(qid){
   const el = document.getElementById(qid);
   if(!el) return;
@@ -351,8 +330,6 @@ function renderEdges(){
 
 function checkRunnable(){
   const hasSequence = state.qubits.some(q=>q.ops.some(o=>o.op==='shake'));
-  const hasBoosted  = state.qubits.some(q=>q.state==='boosted');
-  document.getElementById('run-btn').disabled  = !hasBoosted && !hasSequence;
   document.getElementById('pc-btn').disabled   = !hasSequence;
   const execBtn = document.getElementById('exec-btn');
   if(execBtn) execBtn.disabled = !hasSequence;

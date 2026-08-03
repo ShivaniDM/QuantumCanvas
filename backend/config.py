@@ -16,9 +16,15 @@ class Settings(BaseSettings):
     # Logging
     LOG_DIR: str = "../logs"
 
+    # Optional MongoDB Atlas mirror — if set, every circuit save/execution is
+    # also written to Mongo so runs persist even when this backend's local
+    # disk is ephemeral (e.g. hosted on Azure). Blank = mirror silently skipped.
+    MONGODB_URI: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"   # tolerate unrelated .env entries (e.g. Atlas's sample vars)
 
 
 @lru_cache()

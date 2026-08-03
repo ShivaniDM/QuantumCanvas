@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/main.css">
 <link rel="stylesheet" href="css/pseudocode.css">
+<link rel="stylesheet" href="css/user-logger.css">
 </head>
 <body>
 <div class="app">
@@ -19,9 +20,9 @@
   <div class="tb-status" id="tb-status">
     <b id="qubit-count">0</b> qubits · select a primitive to begin
   </div>
-  <button class="run-btn"    id="run-btn"    onclick="runSystem()"           disabled>Run ▶</button>
   <button class="pc-btn"     id="pc-btn"     onclick="openPseudocodePanel()" disabled>{ } Pseudocode</button>
   <button class="exec-btn"   id="exec-btn"   onclick="openExecutePanel()"    disabled>Execute ⚡</button>
+  <button class="logs-btn"   id="logs-btn"   onclick="QCLogger.openPanel()"  title="View runs saved in this browser">🗂 Logs</button>
 </div>
 
 <div class="sidebar" id="sidebar">
@@ -138,6 +139,7 @@
 <script src="js/qiskit-generator.js"></script>
 <script src="js/qiskit-panel.js"></script>
 <script src="js/execute.js"></script>
+<script src="js/user-logger.js"></script>
 
 </body>
 </html>

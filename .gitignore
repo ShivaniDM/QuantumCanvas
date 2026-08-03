@@ -4,8 +4,13 @@
 .env
 
 # Runtime artifacts — too large/sensitive for git
-logs/
 outputs/
+
+# logs/ is now VERSION-CONTROLLED (moved off Azure ephemeral storage) so runs
+# are shareable and reproducible. We keep the folder and user-attributed runs,
+# but still ignore transient per-process debug logs that hold no circuit value.
+logs/**/execution.log
+logs/**/errors.log
 
 # Python
 __pycache__/

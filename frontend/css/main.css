@@ -20,9 +20,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--white);fo
 .tb-tag{font-size:.68rem;padding:2px 8px;border-radius:20px;background:var(--teal2);color:var(--teal);font-weight:500;letter-spacing:.06em}
 .tb-status{font-size:.75rem;color:var(--gray);margin-left:auto}
 .tb-status b{color:var(--white);font-weight:500}
-.run-btn{padding:6px 18px;border-radius:6px;border:1px solid var(--teal);background:transparent;color:var(--teal);font-family:'DM Sans',sans-serif;font-size:.8rem;font-weight:500;cursor:pointer;transition:background .15s;letter-spacing:.04em}
-.run-btn:hover{background:var(--teal2)}
-.run-btn:disabled{opacity:.3;cursor:default}
 
 /* ── sidebar toolbar ── */
 .sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:2px;overflow:hidden}

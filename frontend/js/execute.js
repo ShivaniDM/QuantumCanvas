@@ -12,12 +12,14 @@ const BACKEND_URL =
 
 // ── Panel state ───────────────────────────────────────────────────────
 const execState = {
-  shots:        1000,
-  jobId:        null,
-  polling:      null,
-  pipelineStep: 0,
-  simResults:   null,   // stored after simulator run for comparison
-  runId:        null,
+  shots:            1000,
+  jobId:            null,
+  polling:          null,
+  pipelineStep:     0,
+  simResults:       null,   // stored after simulator run for comparison
+  runId:            null,
+  lastSavedIrJson:  null,   // ir_json string last confirmed saved to logs/runs/
+  lastSavedInfo:    null,   // {circuit_hash, run_id, path, ...} from that save
 };
 
 // ── Open / close ──────────────────────────────────────────────────────
@@ -73,6 +75,15 @@ function _renderExecPanel(ir, doc, qiskit) {
     <span class="exec-config-label" style="margin-left:8px;opacity:.5">(max 10,000)</span>
   </div>
 
+  <!-- Explicit "save current state" — snapshots IR/pseudocode/Qiskit to
+       logs/runs/<circuit_hash>/ on your own timing, before any execution.
+       Execute also auto-saves first if this hasn't happened yet. -->
+  <div class="exec-state-save">
+    <button class="exec-save-state-btn" id="exec-save-state-btn"
+            onclick="saveCurrentState()">💾 Save current state</button>
+    <span class="exec-save-status" id="exec-save-status">Not saved yet — Execute will auto-save first.</span>
+  </div>
+
   <!-- Simulator results -->
   <div class="exec-results" id="exec-results">
     <div class="exec-results-head" id="exec-results-head">Simulator Results</div>
@@ -106,6 +117,9 @@ function _renderExecPanel(ir, doc, qiskit) {
     <div id="exec-hw-bars"></div>
   </div>
 
+  <!-- Save-log options (A: browser · B: download · C: GitHub repo) -->
+  <div class="qc-save-inline" id="qc-save-inline" style="display:none"></div>
+
   <div class="exec-log" id="exec-log">
     <p class="exec-log-line">Ready — choose a backend to execute.</p>
   </div>
@@ -118,8 +132,44 @@ function _renderExecPanel(ir, doc, qiskit) {
     <button class="exec-run-hw-btn" id="exec-run-hw"
             onclick="execRunHardware()">🖥 IonQ Hardware</button>
     <button class="exec-cancel-btn" onclick="closeExecutePanel()">Close</button>
-    <span class="exec-save-note">Artifacts saved to logs/</span>
+    <span class="exec-save-note">Artifacts saved to logs/runs/</span>
   </div>`;
+
+  // Reflect whether this exact circuit was already saved in an earlier
+  // panel session (lastSavedIrJson persists across opens/closes) —
+  // comparing the raw ir_json string is enough to know "unchanged since
+  // last save", no need to recompute anything server-side just to check.
+  if (execState.lastSavedIrJson === JSON.stringify(ir)) {
+    _setSaveStatus(`✓ already saved — logs/runs/${execState.lastSavedInfo?.run_id}/`, 'ok');
+  }
+}
+
+// ── Capture a run record for the user-logger (A/B/C save options) ─────
+// Reuses _buildPayload so the saved artifacts are byte-identical to what the
+// backend received, then attaches the results and a little metadata.
+function _recordLastRun(counts, runId, kind, raw) {
+  try {
+    const panel   = document.getElementById('exec-panel');
+    const backend = execState.lastBackend || kind;
+    const payload = _buildPayload(backend);
+    execState.lastRun = {
+      schema:         'quantumcanvas.run/v1',
+      run_id:         runId || null,
+      title:          panel?._doc?.title || 'Untitled circuit',
+      backend:        payload.backend,
+      shots:          payload.shots,
+      kind:           kind,                       // 'sim' | 'qpu'
+      n_qubits:       panel?._ir?.n ?? null,
+      created_at:     new Date().toISOString(),
+      canvas_json:    payload.canvas_json,
+      ir_json:        payload.ir_json,
+      pseudocode_txt: payload.pseudocode_txt,
+      qiskit_py:      payload.qiskit_py,
+      results:        counts || null,
+      raw:            raw || null,
+    };
+    if (window.QCLogger) QCLogger.onRunComplete(execState.lastRun);
+  } catch (e) { console.warn('QCLogger record failed', e); }
 }
 
 // ── Build payload ─────────────────────────────────────────────────────
@@ -147,6 +197,61 @@ function _buildPayload(backend) {
   };
 }
 
+// ── Save current state (explicit button + automatic-before-execute) ───
+// Tracks the exact ir_json string last confirmed saved to logs/runs/. Simple
+// string equality is enough to know "unchanged since last save" — the
+// backend is the one that computes the real circuit hash used as the folder
+// name, so the frontend doesn't need to replicate that, just detect "did the
+// circuit change since I last saved it".
+async function _ensureSaved(payload) {
+  if (payload.ir_json === execState.lastSavedIrJson) {
+    return execState.lastSavedInfo;   // unchanged since last save — skip
+  }
+  const resp = await fetch(`${BACKEND_URL}/log-circuit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      canvas_json:    payload.canvas_json,
+      ir_json:        payload.ir_json,
+      pseudocode_txt: payload.pseudocode_txt,
+      qiskit_py:      payload.qiskit_py,
+    }),
+  });
+  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+  const data = await resp.json();
+  execState.lastSavedIrJson = payload.ir_json;
+  execState.lastSavedInfo   = data;
+  return data;
+}
+
+// ── Explicit "💾 Save current state" button ────────────────────────────
+async function saveCurrentState() {
+  const panel = document.getElementById('exec-panel');
+  if (!panel?._ir) { execLog('Nothing to save yet.', 'warn'); return; }
+  const btn = document.getElementById('exec-save-state-btn');
+  if (btn) btn.disabled = true;
+  _setSaveStatus('… saving', '');
+  try {
+    const payload = _buildPayload('snapshot');   // backend field unused by /log-circuit
+    const data    = await _ensureSaved(payload);
+    const note    = data.already_saved
+      ? `already saved — logs/runs/${data.run_id}/ (no changes)`
+      : `saved — logs/runs/${data.run_id}/`;
+    execLog(`💾 Circuit ${note}`, 'ok');
+    _setSaveStatus(`✓ logs/runs/${data.run_id}/`, 'ok');
+  } catch (e) {
+    execLog(`✖ Save failed: ${e.message}`, 'err');
+    _setSaveStatus(`✖ ${e.message}`, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _setSaveStatus(msg, cls) {
+  const el = document.getElementById('exec-save-status');
+  if (el) { el.textContent = msg; el.className = `exec-save-status ${cls||''}`; }
+}
+
 // ── Enable/disable all run buttons together ───────────────────────────
 function _setRunButtonsDisabled(disabled) {
   ['exec-run-aer', 'exec-run-ionq', 'exec-run-hw'].forEach(id => {
@@ -171,10 +276,12 @@ async function execRunSimulator(backend) {
   _setPipeStep(2);
 
   try {
+    const payload = _buildPayload(backend);
+    await _ensureSaved(payload);   // auto-saves circuit state first if it hasn't been yet
     const resp = await fetch(`${BACKEND_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(_buildPayload(backend)),
+      body: JSON.stringify(payload),
     });
     if(!resp.ok) throw new Error(`Backend ${resp.status}: ${await resp.text()}`);
     const data = await resp.json();
@@ -264,9 +371,9 @@ function _onSimResults(counts, runId) {
     document.getElementById('exec-bars').innerHTML =
       `<div style="opacity:.75;font-size:.72rem;padding:6px 0">`
       + `${label} returned no counts. Backend responded but the histogram was empty — `
-      + `check logs/${runId || '…'}/ionq_results_raw.json for the raw IonQ response.</div>`;
+      + `check logs/runs/${runId || '…'}/ionq_results_raw.json for the raw IonQ response.</div>`;
     execLog(`⚠ ${label} simulator returned no counts (empty histogram).`, 'warn');
-    if(runId) execLog(`  See logs/${runId}/ionq_results_raw.json`);
+    if(runId) execLog(`  See logs/runs/${runId}/ionq_results_raw.json`);
     _setRunButtonsDisabled(false);
     return;
   }
@@ -275,8 +382,9 @@ function _onSimResults(counts, runId) {
   const top = Object.entries(clean).sort((a,b)=>b[1]-a[1])[0];
   const topPct = top ? (top[1]/total*100).toFixed(1) : '?';
   execLog(`✓ ${label} simulator done — ${total} shots · top: |${top?.[0]}⟩ (${topPct}%)`, 'ok');
-  if(runId) execLog(`  Artifacts saved to logs/${runId}/`);
+  if(runId) execLog(`  Artifacts saved to logs/runs/${runId}/`);
 
+  _recordLastRun(counts, runId, 'sim');
   _setRunButtonsDisabled(false);
   // Simulators do not show a cost card — that is reserved for IonQ Hardware.
 }
@@ -374,6 +482,7 @@ async function execRunQPU() {
   execLog(`⚡ Submitting REAL hardware job → POST ${BACKEND_URL}/execute (backend=qpu, shots=${shots})`, 'ok');
 
   try {
+    await _ensureSaved(payload);   // auto-saves circuit state first if it hasn't been yet
     const resp = await fetch(`${BACKEND_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -466,7 +575,8 @@ function _onQPUResults(counts, runId, raw) {
       + _rawBlock('IonQ hardware job', raw));
   }
 
-  if(runId) execLog(`  QPU artifacts saved to logs/${runId}/`);
+  if(runId) execLog(`  QPU artifacts saved to logs/runs/${runId}/`);
+  _recordLastRun(counts, runId, 'qpu', raw);
   document.getElementById('exec-qpu-card').style.display = 'none';
 }
 

@@ -146,7 +146,13 @@ class IonQRunner:
 
     def _submit_job(self, ionq_input: dict, shots: int, backend: str,
                     name: str, dry_run: bool = False) -> str:
-        """Submit a v0.4 single-circuit job and return the job_id."""
+        """
+        Submit a v0.4 single-circuit job and return the job_id.
+        `name` (e.g. "qc-simulator", "qc-qpu") labels the saved artifacts so
+        running multiple IonQ backends against the same saved circuit doesn't
+        overwrite one backend's raw request/response with another's.
+        """
+        label = name.replace('qc-', '')
         payload = {
             "type":    "ionq.circuit.v1",
             "backend": backend,
@@ -157,7 +163,7 @@ class IonQRunner:
         if dry_run:
             payload["dry_run"] = True
 
-        self.logger.save("ionq_request.json", payload)
+        self.logger.save(f"ionq_request_{label}.json", payload)
         self.logger.log(f"Submitting to IonQ backend={backend} shots={shots} dry_run={dry_run}")
 
         resp = self.session.post(self.endpoint + self.JOBS_URL, json=payload, timeout=30)
@@ -165,11 +171,11 @@ class IonQRunner:
         if not resp.ok:
             body = resp.text
             self.logger.error(f"IonQ submit failed {resp.status_code}: {body}")
-            self.logger.save("ionq_error.json", {"status": resp.status_code, "body": body})
+            self.logger.save(f"ionq_error_{label}.json", {"status": resp.status_code, "body": body})
             raise RuntimeError(f"IonQ {resp.status_code}: {body}")
 
         data = resp.json()
-        self.logger.save("ionq_response.json", data)
+        self.logger.save(f"ionq_response_{label}.json", data)
         self.logger.log(f"IonQ submitted job_id={data.get('id')} status={data.get('status')}")
         return data["id"]
 
@@ -181,7 +187,7 @@ class IonQRunner:
 
         for attempt in range(90):          # up to ~180s
             time.sleep(2)
-            status = self.get_job_status(job_id)
+            status = self.get_job_status(job_id, backend_label="simulator")
             self.logger.log(f"Poll {attempt+1}: job={job_id} status={status.status}")
             if status.status in ("failed", "canceled", "cancelled"):
                 raise RuntimeError(f"IonQ job {status.status}")
@@ -247,7 +253,7 @@ class IonQRunner:
             "gate_counts": stats.get("gate_counts"),
         }
 
-    def get_job_status(self, job_id: str) -> JobStatus:
+    def get_job_status(self, job_id: str, backend_label: str = "") -> JobStatus:
         """Poll a job. Counts are fetched only once status == 'completed'."""
         resp = self.session.get(self.endpoint + self.STATUS_URL.format(job_id=job_id), timeout=15)
         resp.raise_for_status()
@@ -258,11 +264,11 @@ class IonQRunner:
         counts = None
         if status == "completed":
             shots  = data.get("shots", 1000)
-            counts = self._extract_counts(data, shots)
+            counts = self._extract_counts(data, shots, backend_label)
 
         return JobStatus(job_id=job_id, status=status, counts=counts, raw_response=data)
 
-    def _extract_counts(self, data: dict, shots: int) -> dict:
+    def _extract_counts(self, data: dict, shots: int, backend_label: str = "") -> dict:
         """
         v0.4: a completed job's `results` maps names -> descriptors. The
         'probabilities' entry carries a direct url returning {state: prob}
@@ -283,7 +289,8 @@ class IonQRunner:
             resp = self.session.get(full, timeout=15)
             resp.raise_for_status()
             payload = resp.json()
-            self.logger.save("ionq_results_raw.json", payload)
+            suffix = f"_{backend_label}" if backend_label else ""
+            self.logger.save(f"ionq_results_raw{suffix}.json", payload)
         except Exception as e:
             self.logger.error(f"Failed to fetch probabilities: {e}")
             return {}
