@@ -321,9 +321,12 @@ async function execRunHardware() {
 // ── Poll simulator job ────────────────────────────────────────────────
 function _pollSimJob(jobId) {
   let attempts = 0;
+  // Large circuits (20+ qubits) can take well over 3 minutes on IonQ's cloud
+  // simulator - 60 attempts x 3s was giving up before those jobs ever finished.
+  const maxAttempts = 200; // 10 minutes
   execState.polling = setInterval(async () => {
     attempts++;
-    if(attempts > 60) {
+    if(attempts > maxAttempts) {
       clearInterval(execState.polling); execState.polling = null;
       execLog('✖ Timeout waiting for simulator result', 'err');
       _setPipeStep(5);

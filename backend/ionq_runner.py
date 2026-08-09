@@ -8,7 +8,9 @@ v0.4 job model (validated against the live API):
              shots, input: {gateset: "qis", qubits, circuit}}  (+ dry_run for cost)
   - Poll:    GET /v0.4/jobs/{id}  until status == "completed"
              ("ready"/"started" are INTERMEDIATE, not done)
-  - Counts:  job.results.probabilities.url -> {state: prob} -> round(prob*shots)
+  - Counts:  job.results.probabilities.url -> {state: prob} -> counts via
+             largest-remainder apportionment (preserves total shots even
+             when shots << number of possible states)
   - Cost:    GET /v0.4/jobs/{id}/cost -> estimated_cost.value (USD)
 """
 
@@ -304,16 +306,37 @@ class IonQRunner:
                         merged[st] = merged.get(st, 0.0) + float(p)
             probs = merged
 
-        counts = {}
+        state_probs = {}
         for state, p in (probs or {}).items():
             try:
                 bits = format(int(str(state), 0), f"0{int(n_qubits)}b")
             except (ValueError, TypeError):
                 bits = str(state)
             try:
-                counts[bits] = counts.get(bits, 0) + round(float(p) * shots)
+                state_probs[bits] = state_probs.get(bits, 0.0) + float(p)
             except (ValueError, TypeError):
                 continue
 
+        counts = _probs_to_counts(state_probs, shots)
         self.logger.log(f"Counts extracted: {counts}")
         return counts
+
+
+def _probs_to_counts(state_probs: dict, shots: int) -> dict:
+    """
+    Convert a {bitstring: probability} distribution into a {bitstring: count}
+    histogram summing to exactly `shots`, via the largest-remainder method.
+    Naive per-state round(p*shots) drops every state - and the whole
+    histogram - whenever shots is small relative to the number of possible
+    states (p*shots < 0.5 for all of them, e.g. 1000 shots over the 4096
+    states of a 12-qubit circuit).
+    """
+    if not state_probs or shots <= 0:
+        return {}
+    raw    = {s: p * shots for s, p in state_probs.items()}
+    counts = {s: int(v) for s, v in raw.items()}
+    remainder = shots - sum(counts.values())
+    if remainder > 0:
+        for s in sorted(raw, key=lambda s: raw[s] - counts[s], reverse=True)[:remainder]:
+            counts[s] += 1
+    return {s: c for s, c in counts.items() if c > 0}
