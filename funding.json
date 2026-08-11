@@ -21,7 +21,7 @@
       },
       "repositoryUrl": {
         "url": "https://github.com/ShivaniDM/QuantumCanvas",
-        "wellKnown": "https://github.com/ShivaniDM/QuantumCanvas/blob/main/.well-known/funding-manifest-urls"
+        "wellKnown": "https://raw.githubusercontent.com/ShivaniDM/QuantumCanvas/main/.well-known/funding-manifest-urls"
       },
       "licenses": [
         "spdx:MIT"
