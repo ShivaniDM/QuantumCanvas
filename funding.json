@@ -1,73 +1,88 @@
 {
-    "$schema": "https://floss.fund/schema/v1.0.0/funding.schema.json#",
-    "version": "v1.0.0",
-    "entity": {
-        "type": "individual",
-        "role": "maintainer",
-        "name": "Shivani Mayekar",
-        "email": "shivanimayekar.se@gmail.com",
-        "phone": "",
-        "description": "I'm a developer and quantum computing researcher building open tools that lower the barrier to entry for quantum programming. My focus is on visual, concept-level abstractions that let people design and run quantum algorithms without needing to master quantum computing first. I'm a Master's student at Georgia Tech, a QRISE 2024 winner, and I care about keeping quantum education accessible and open source.",
-        "webpageUrl": {
-            "url": "https://github.com/ShivaniDM",
-            "wellKnown": ""
-        }
-    },
-    "projects": [{
-        "guid": "quantumcanvas",
-        "name": "QuantumCanvas",
-        "description": "QuantumCanvas is an open-source No Code visual platform that lets people design and run quantum circuits by reasoning in concepts rather than gates. Users build algorithms with intuitive primitives (superposition, entanglement, amplification, measurement) instead of assembling low-level gates, and the tool generates runnable Qiskit code and executes on Aer and IonQ simulators, with transparency at every layer: circuit, pseudocode, generated code, and results.\n\nIt lowers the barrier to entry for students, educators, and researchers blocked by the steep gate-level/Programming learning curve, while still letting experienced developers drop down and modify individual gates. Rather than replacing Qiskit or vendor tools, it sits above them as a framework-agnostic front door that feeds into the existing quantum stack.\n\nQuantumCanvas is MIT-licensed and originated in the IonQ x Qollab challenge.",
-        "webpageUrl": {
-            "url": "https://blue-sea-0f9bdf510.7.azurestaticapps.net/"
-        },
-        "repositoryUrl": {
-            "url": "https://github.com/ShivaniDM/QuantumCanvas",
-            "wellKnown": "https://github.com/ShivaniDM/QuantumCanvas/blob/main/.well-known/funding-manifest-urls"
-        },
-        "licenses": ["spdx:MIT"],
-        "tags": ["quantum-computing", "education", "visual-programming", "qiskit", "developer-tools", "No-code"]
-    }],
-    "funding": {
-        "channels": [
-            {
-                "guid": "mybank",
-                "type": "bank",
-                "address": "",
-                "description": "Direct bank transfer. Please email for details."
-            }
-        ],
-        "plans": [
-            {
-                "guid": "developer-time",
-                "status": "active",
-                "name": "Developer compensation (part-time)",
-                "description": "Supports one developer working part-time on QuantumCanvas: expanding the primitive set, adding AI-assisted user features, a built-in code editor, improving the visual builder, hardening simulator and hardware integration, and building documentation and in-app learning tools.",
-                "amount": 1500,
-                "currency": "USD",
-                "frequency": "monthly",
-                "channels": ["mybank"]
-            },
-            {
-                "guid": "compute-access",
-                "status": "active",
-                "name": "Subsidized compute access",
-                "description": "IonQ covers compute for QuantumCanvas through August 31, 2026. After that, running a basic circuit on real quantum hardware costs the user roughly 162 USD per run, which is a barrier for students and educators. This plan funds subsidized simulator hosting and sponsored hardware runs so learners can execute real circuits without hitting a per-run cost wall.",
-                "amount": 3000,
-                "currency": "USD",
-                "frequency": "one-time",
-                "channels": ["mybank"]
-            },
-            {
-                "guid": "goodwill",
-                "status": "active",
-                "name": "Goodwill plan",
-                "description": "Contribute any amount to support the project.",
-                "amount": 0,
-                "currency": "USD",
-                "frequency": "one-time",
-                "channels": ["mybank"]
-            }
-        ],
-        "history": []
+  "version": "v1.0.0",
+  "entity": {
+    "type": "individual",
+    "role": "maintainer",
+    "name": "Shivani Mayekar",
+    "email": "shivanimayekar.se@gmail.com",
+    "phone": "",
+    "description": "I'm a developer and quantum computing researcher building open tools that lower the barrier to entry for quantum programming. My focus is on visual, concept-level abstractions that let people design and run quantum algorithms without needing to master quantum computing first. I'm a Master's student at Georgia Tech, a QRISE 2024 winner, and I care about keeping quantum education accessible and open source.",
+    "webpageUrl": {
+      "url": "https://github.com/ShivaniDM"
     }
+  },
+  "projects": [
+    {
+      "guid": "quantumcanvas",
+      "name": "quantumcanvas",
+      "description": "QuantumCanvas is an open-source No Code visual platform that lets people design and run quantum circuits by reasoning in concepts rather than gates. Users build algorithms with intuitive primitives (superposition, entanglement, amplification, measurement) instead of assembling low-level gates, and the tool generates runnable Qiskit code and executes on Aer and IonQ simulators, with transparency at every layer: circuit, pseudocode, generated code, and results.\n\nIt lowers the barrier to entry for students, educators, and researchers blocked by the steep gate-level/Programming learning curve, while still letting experienced developers drop down and modify individual gates. Rather than replacing Qiskit or vendor tools, it sits above them as a framework-agnostic front door that feeds into the existing quantum stack.\n\nQuantumCanvas is MIT-licensed and originated in the IonQ x Qollab challenge.",
+      "webpageUrl": {
+        "url": "https://blue-sea-0f9bdf510.7.azurestaticapps.net/"
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/ShivaniDM/QuantumCanvas",
+        "wellKnown": "https://github.com/ShivaniDM/QuantumCanvas/blob/main/.well-known/funding-manifest-urls"
+      },
+      "licenses": [
+        "spdx:MIT"
+      ],
+      "tags": [
+        "quantum-computing",
+        "education",
+        "visual-programming",
+        "qiskit",
+        "developer-tools",
+        "no-code"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "mybank",
+        "type": "bank",
+        "address": "",
+        "description": "Direct bank transfer. Please email for details."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "developer-time",
+        "status": "active",
+        "name": "Developer compensation (part-time)",
+        "description": "Supports one developer working part-time on QuantumCanvas: expanding the primitive set, adding AI-assisted user features, a built-in code editor, improving the visual builder, hardening simulator and hardware integration, and building documentation and in-app learning tools.",
+        "amount": 1500,
+        "currency": "USD",
+        "frequency": "monthly",
+        "channels": [
+          "mybank"
+        ]
+      },
+      {
+        "guid": "compute-access",
+        "status": "active",
+        "name": "Subsidized compute access",
+        "description": "IonQ covers compute for QuantumCanvas through August 31, 2026. After that, running a basic circuit on real quantum hardware costs the user roughly 162 USD per run, which is a barrier for students and educators. This plan funds subsidized simulator hosting and sponsored hardware runs so learners can execute real circuits without hitting a per-run cost wall.",
+        "amount": 3000,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "mybank"
+        ]
+      },
+      {
+        "guid": "goodwill",
+        "status": "active",
+        "name": "Goodwill plan",
+        "description": "Contribute any amount to support the project.",
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "mybank"
+        ]
+      }
+    ],
+    "history": []
+  }
 }
