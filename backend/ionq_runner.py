@@ -93,6 +93,17 @@ def qiskit_source_to_ionq_circuit(qiskit_code: str, n_qubits: int) -> dict:
             gates.extend(_toffoli(a, b, c))
             continue
 
+        # qc.mcx([controls...], target) - emitted by the MARK/BOOST oracle's
+        # H·MCX·H (MCZ) pattern for registers of 4+ qubits. IonQ's QIS gateset
+        # supports multi-controlled gates natively via a "controls" array, so
+        # this maps directly instead of needing a manual decomposition.
+        m = re.match(r'qc\.mcx\(\[([\d,\s]+)\],\s*(\d+)\)', line)
+        if m:
+            controls = [int(x) for x in m.group(1).split(',') if x.strip()]
+            target = int(m.group(2))
+            gates.append({"gate": "x", "target": target, "controls": controls})
+            continue
+
         # measure calls are implicit on IonQ (all qubits measured at end) - skip
 
     return {"gateset": "qis", "qubits": n_qubits, "circuit": gates}
