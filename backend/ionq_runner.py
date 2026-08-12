@@ -93,6 +93,20 @@ def qiskit_source_to_ionq_circuit(qiskit_code: str, n_qubits: int) -> dict:
             gates.extend(_toffoli(a, b, c))
             continue
 
+        # qc.mcx([controls...], target) - emitted by the MARK/BOOST oracle's
+        # H·MCX·H (MCZ) pattern for registers of 4+ qubits. Use IonQ's named
+        # "mcx" QIS gate (auto-decomposed server-side) rather than attaching a
+        # "controls" array to a plain "x" gate - the latter hit a hard
+        # TooManyControls error above 7 controls on a real submitted job;
+        # "mcx" is documented to have no such cap, only qubit/gate-budget
+        # limits, since IonQ's compiler decomposes it itself.
+        m = re.match(r'qc\.mcx\(\[([\d,\s]+)\],\s*(\d+)\)', line)
+        if m:
+            controls = [int(x) for x in m.group(1).split(',') if x.strip()]
+            target = int(m.group(2))
+            gates.append({"gate": "mcx", "target": target, "controls": controls})
+            continue
+
         # measure calls are implicit on IonQ (all qubits measured at end) - skip
 
     return {"gateset": "qis", "qubits": n_qubits, "circuit": gates}
