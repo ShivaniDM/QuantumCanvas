@@ -42,7 +42,11 @@ function _renderQiskitPanel(ir, doc, qiskit){
   <div class="qk-code-wrap">
     <div class="qk-toolbar">
       <span class="qk-lang-badge">Python · Qiskit</span>
-      <button class="qk-copy-btn" onclick="qkCopy()">Copy</button>
+      <div class="qk-toolbar-actions">
+        <button class="qk-copy-btn" onclick="qkCopy()">Copy</button>
+        <button class="qk-qasm-btn" onclick="qkCopyQasm()"
+                title="Paste into IBM Quantum Composer's code editor to see it rendered visually">Copy as QASM</button>
+      </div>
     </div>
     <pre class="qk-pre" id="${copyId}">${buildHighlightedCode(qiskit)}</pre>
   </div>
@@ -121,6 +125,42 @@ function qkCopy(){
     document.body.removeChild(ta);
     const btn = document.querySelector('.qk-copy-btn');
     if(btn){ btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy', 1800); }
+  });
+}
+
+async function qkCopyQasm(){
+  const panel = document.getElementById('pc-panel');
+  const code  = panel._qkCode || '';
+  const btn   = document.querySelector('.qk-qasm-btn');
+  if(!code){ toast('Nothing to export yet','error'); return; }
+
+  if(btn){ btn.disabled = true; btn.textContent = 'Exporting…'; }
+  try{
+    const resp = await fetch(`${BACKEND_URL}/qasm`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ qiskit_py: code }),
+    });
+    const data = await resp.json();
+    if(!resp.ok || !data.qasm) throw new Error(data.error || data.detail || `${resp.status}`);
+
+    await _copyText(data.qasm);
+    if(btn){ btn.textContent = 'Copied!'; }
+    toast('QASM copied — paste into IBM Quantum Composer\'s code editor to see it visually', 'valid');
+  } catch(e){
+    toast(`QASM export failed: ${e.message}`, 'error');
+    if(btn){ btn.textContent = 'Copy as QASM'; }
+  } finally {
+    if(btn){ btn.disabled = false; setTimeout(()=>{ btn.textContent = 'Copy as QASM'; }, 1800); }
+  }
+}
+
+function _copyText(text){
+  return navigator.clipboard.writeText(text).catch(()=>{
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
   });
 }
 
