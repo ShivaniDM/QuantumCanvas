@@ -5,6 +5,7 @@ Routes:
   POST /execute      — receive canvas artifacts, run simulator or IonQ, save logs
   GET  /job/{id}     — poll IonQ job status
   POST /cost         — dry-run cost estimate for QPU hardware
+  POST /qasm         — export generated Qiskit as OpenQASM 2.0 text
 """
 
 from fastapi import FastAPI, HTTPException
@@ -64,6 +65,13 @@ class JobResponse(BaseModel):
     run_id:  str | None  = None
     error:   str | None  = None
     raw:     dict | None = None   # full IonQ job object (hardware metadata)
+
+class QasmRequest(BaseModel):
+    qiskit_py: str
+
+class QasmResponse(BaseModel):
+    qasm:  str  | None = None
+    error: str  | None = None
 
 class CostResponse(BaseModel):
     cost_usd:                  float | None = None
@@ -210,8 +218,11 @@ async def poll_job(job_id: str):
         status: JobStatus = runner.get_job_status(job_id, backend_label=backend)
 
         if status.is_terminal and status.counts:
-            logger.save(f"ionq_response_{backend}.json", status.raw_response)
-            logger.save(f"results_{backend}.json",       status.counts)
+            # Distinct name from the submit-ack file (ionq_response_{label}.json,
+            # saved in _submit_job) — for QPU jobs both used "qpu" and the
+            # completed response silently overwrote the submit ack.
+            logger.save(f"ionq_completed_{backend}.json", status.raw_response)
+            logger.save(f"results_{backend}.json",        status.counts)
             logger.log(f"Job {job_id} completed — saving artifacts")
 
         return JobResponse(
@@ -257,6 +268,17 @@ async def estimate_cost(req: ExecuteRequest):
     except Exception as e:
         logger.error(str(e))
         return CostResponse(error=str(e))
+
+
+@app.post("/qasm", response_model=QasmResponse)
+async def export_qasm(req: QasmRequest):
+    """Export the generated Qiskit circuit as OpenQASM 2.0 text, e.g. for
+    pasting into IBM Quantum Composer's code editor."""
+    try:
+        from qasm_export import export_qasm2
+        return QasmResponse(qasm=export_qasm2(req.qiskit_py))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
