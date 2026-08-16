@@ -221,13 +221,15 @@
   font-family: 'Space Mono', monospace; font-size: .6rem;
   color: var(--gray); letter-spacing: .08em;
 }
-.qk-copy-btn {
+.qk-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.qk-copy-btn, .qk-qasm-btn {
   font-family: 'Space Mono', monospace; font-size: .65rem;
   background: none; border: 1px solid var(--border);
   color: var(--gray); border-radius: 4px; padding: 2px 10px;
   cursor: pointer; transition: all .15s;
 }
-.qk-copy-btn:hover { border-color: var(--teal); color: var(--teal); }
+.qk-copy-btn:hover, .qk-qasm-btn:hover { border-color: var(--teal); color: var(--teal); }
+.qk-qasm-btn:disabled { opacity: .5; cursor: default; }
 .qk-pre {
   margin: 0; padding: 14px 16px;
   font-family: 'Space Mono', monospace; font-size: .72rem;
