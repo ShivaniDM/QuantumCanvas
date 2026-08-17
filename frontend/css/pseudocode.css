@@ -221,29 +221,15 @@
   font-family: 'Space Mono', monospace; font-size: .6rem;
   color: var(--gray); letter-spacing: .08em;
 }
-.qk-export-wrap { position: relative; }
-.qk-export-btn {
+.qk-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.qk-copy-btn, .qk-qasm-btn {
   font-family: 'Space Mono', monospace; font-size: .65rem;
   background: none; border: 1px solid var(--border);
   color: var(--gray); border-radius: 4px; padding: 2px 10px;
   cursor: pointer; transition: all .15s;
 }
-.qk-export-btn:hover { border-color: var(--teal); color: var(--teal); }
-.qk-export-menu {
-  display: none; flex-direction: column;
-  position: absolute; top: calc(100% + 4px); right: 0; z-index: 20;
-  min-width: 160px; padding: 4px;
-  background: #0d1117; border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.4);
-}
-.qk-export-menu.open { display: flex; }
-.qk-export-item {
-  font-family: 'Space Mono', monospace; font-size: .68rem;
-  text-align: left; background: none; border: none;
-  color: var(--white); padding: 6px 10px; border-radius: 4px;
-  cursor: pointer; transition: background .15s;
-}
-.qk-export-item:hover { background: rgba(0,212,170,.12); color: var(--teal); }
+.qk-copy-btn:hover, .qk-qasm-btn:hover { border-color: var(--teal); color: var(--teal); }
+.qk-qasm-btn:disabled { opacity: .5; cursor: default; }
 .qk-pre {
   margin: 0; padding: 14px 16px;
   font-family: 'Space Mono', monospace; font-size: .72rem;
@@ -288,6 +274,16 @@
   padding: 1px 5px; border-radius: 3px;
 }
 .qk-impl { color: var(--teal); font-size: .68rem; }
+
+/* collab button */
+.qk-collab-btn {
+  padding: 8px 14px; border-radius: 6px;
+  border: 1px solid var(--violet); background: var(--violet2);
+  color: var(--violet); font-family: 'DM Sans', sans-serif;
+  font-size: .8rem; font-weight: 500; cursor: pointer;
+  transition: all .15s; letter-spacing: .02em;
+}
+.qk-collab-btn:hover { background: rgba(155,109,255,.2); }
 
 /* ── Execute button (topbar) ── */
 .exec-btn {
