@@ -1,12 +1,5 @@
-// QuantumCanvas — Qiskit panel renderer, export dropdown
+// QuantumCanvas — Qiskit panel renderer, copy, Collab stub
 // Load order: state.js → ir.js → pseudocode.js → ui.js → qiskit-generator.js → qiskit-panel.js
-
-// ── Export formats — add new languages here, nothing else needs to change ──
-const QK_EXPORT_FORMATS = [
-  { key: 'qiskit', label: 'Qiskit (Python)' },
-  { key: 'qasm2',  label: 'QASM 2.0',
-    hint: "Paste into IBM Quantum Composer's code editor to see it rendered visually" },
-];
 
 // ── Qiskit Panel ──────────────────────────────────────────────────────
 
@@ -49,11 +42,10 @@ function _renderQiskitPanel(ir, doc, qiskit){
   <div class="qk-code-wrap">
     <div class="qk-toolbar">
       <span class="qk-lang-badge">Python · Qiskit</span>
-      <div class="qk-export-wrap">
-        <button class="qk-export-btn" onclick="qkToggleExportMenu(event)">Export ▾</button>
-        <div class="qk-export-menu" id="qk-export-menu">
-          ${QK_EXPORT_FORMATS.map(f => `<button class="qk-export-item" onclick="qkExportAs('${f.key}')"${f.hint ? ` title="${_h(f.hint)}"` : ''}>${_h(f.label)}</button>`).join('')}
-        </div>
+      <div class="qk-toolbar-actions">
+        <button class="qk-copy-btn" onclick="qkCopy()">Copy</button>
+        <button class="qk-qasm-btn" onclick="qkCopyQasm()"
+                title="Paste into IBM Quantum Composer's code editor to see it rendered visually">Copy as QASM</button>
       </div>
     </div>
     <pre class="qk-pre" id="${copyId}">${buildHighlightedCode(qiskit)}</pre>
@@ -75,6 +67,7 @@ function _renderQiskitPanel(ir, doc, qiskit){
 
   <div class="pc-footer">
     <button class="pc-qiskit-btn" onclick="qkBackToPseudocode()">← Pseudocode</button>
+    <button class="qk-collab-btn" onclick="qkSendToCollab()">Send to Collab ▶</button>
     <button class="pc-footer-cancel" onclick="closePseudocodePanel()">Close</button>
   </div>`;
 
@@ -118,46 +111,48 @@ function buildHighlightedCode(qiskit){
   }).join('\n');
 }
 
-function qkToggleExportMenu(e){
-  e.stopPropagation();
-  document.getElementById('qk-export-menu')?.classList.toggle('open');
-}
-
-function qkCloseExportMenu(){
-  document.getElementById('qk-export-menu')?.classList.remove('open');
-}
-document.addEventListener('click', qkCloseExportMenu);
-
-async function qkExportAs(kind){
-  qkCloseExportMenu();
+function qkCopy(){
   const panel = document.getElementById('pc-panel');
-  const code  = panel?._qkCode || '';
+  const code  = panel._qkCode || document.getElementById('qk-code-block')?.innerText || '';
+  navigator.clipboard.writeText(code).then(()=>{
+    const btn = document.querySelector('.qk-copy-btn');
+    if(btn){ btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy', 1800); }
+  }).catch(()=>{
+    // Fallback for non-https
+    const ta = document.createElement('textarea');
+    ta.value = code; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.querySelector('.qk-copy-btn');
+    if(btn){ btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy', 1800); }
+  });
+}
+
+async function qkCopyQasm(){
+  const panel = document.getElementById('pc-panel');
+  const code  = panel._qkCode || '';
+  const btn   = document.querySelector('.qk-qasm-btn');
   if(!code){ toast('Nothing to export yet','error'); return; }
 
-  if(kind === 'qiskit'){
-    await _copyText(code);
-    toast('Qiskit code copied','valid');
-    return;
-  }
+  if(btn){ btn.disabled = true; btn.textContent = 'Exporting…'; }
+  try{
+    const resp = await fetch(`${BACKEND_URL}/qasm`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ qiskit_py: code }),
+    });
+    const data = await resp.json();
+    if(!resp.ok || !data.qasm) throw new Error(data.error || data.detail || `${resp.status}`);
 
-  if(kind === 'qasm2'){
-    try{
-      const resp = await fetch(`${BACKEND_URL}/qasm`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ qiskit_py: code }),
-      });
-      const data = await resp.json();
-      if(!resp.ok || !data.qasm) throw new Error(data.error || data.detail || `${resp.status}`);
-      await _copyText(data.qasm);
-      toast('QASM copied — paste into IBM Quantum Composer\'s code editor to see it visually', 'valid');
-    } catch(e){
-      toast(`QASM export failed: ${e.message}`, 'error');
-    }
-    return;
+    await _copyText(data.qasm);
+    if(btn){ btn.textContent = 'Copied!'; }
+    toast('QASM copied — paste into IBM Quantum Composer\'s code editor to see it visually', 'valid');
+  } catch(e){
+    toast(`QASM export failed: ${e.message}`, 'error');
+    if(btn){ btn.textContent = 'Copy as QASM'; }
+  } finally {
+    if(btn){ btn.disabled = false; setTimeout(()=>{ btn.textContent = 'Copy as QASM'; }, 1800); }
   }
-
-  toast(`Unknown export format: ${kind}`, 'error');
 }
 
 function _copyText(text){
@@ -167,6 +162,14 @@ function _copyText(text){
     ta.select(); document.execCommand('copy');
     document.body.removeChild(ta);
   });
+}
+
+function qkSendToCollab(){
+  const panel  = document.getElementById('pc-panel');
+  const code   = panel._qkCode || '';
+  addLog('⟶ Qiskit code ready for Collab API — endpoint pending from Kenzo','violet');
+  toast('Collab API endpoint not yet configured — ping Kenzo on Slack','warn');
+  console.log('[QC Collab] Qiskit code to POST:\n\n' + code);
 }
 
 function qkBackToPseudocode(){
