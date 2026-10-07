@@ -196,7 +196,9 @@ function _buildPayload(backend) {
   return {
     canvas_json:    JSON.stringify({ qubits: state.qubits.map(q=>({
                       id:q.id, label:q.label, state:q.state, ops:q.ops, result:q.result
-                    })), edges: state.edges }),
+                    })), edges: state.edges,
+                    // concept steps, so the run can be reopened (File → Open run in Concepts mode)
+                    ...(panel._concept && window.QCConcepts ? { concepts: QCConcepts.snapshot() } : {}) }),
     ir_json:        panel._concept ? JSON.stringify(panel._concept) : JSON.stringify(ir),
     pseudocode_txt: _buildPseudocodeText(doc),
     qiskit_py:      qiskitCode,

@@ -38,9 +38,36 @@ Endpoints added: `POST /compile`, `GET /problems`, `POST /check-problem`. `POST 
 5. **`/execute` now re-raises deliberate 4xx errors.** Before, any `HTTPException` raised inside its `try` was turned into a 500.
 6. Three small pre-existing bugs fixed on the way: the top-bar qubit counter lost its id after the first update (second qubit placement threw), `clearCanvas()` did not reset qubit numbering, and the Qiskit panel's syntax highlighter printed stray `"qk-kw">` text.
 
+## Explanation faithfulness (added after reviewing run f9e60a7115d2)
+
+A reviewed run (Encode, Shake, Entangle, Mark, Boost on one qubit, measure q0 → 894/106) showed that the
+template pseudocode could state things the circuit did not do. Fixes, all computed from the circuit
+(`backend/concepts/analysis.py`, exact statevector, ≤ 12 qubits, only up to the first measurement):
+
+* Every step gets an **effect** sentence with real numbers (chance of 1 before → after, entanglement in bits,
+  chance of the marked answer round by round for Boost). It is appended to the pseudocode sentence as "Result: …".
+* When a template claim would be false the sentence is **replaced** (`claim_ok: false`): Boost that lowers the marked
+  answer, Boost with no Mark, Boost on one qubit, Boost past its best round, Shake over encoded data, Entangle with
+  nothing in superposition.
+* Code comments name the action only (`# BOOST [q1]`), never what it supposedly does.
+* New warnings: `W_SHAKE_AFTER_ENCODE`, `W_BOOST_SINGLE_QUBIT`, `W_UNMEASURED_EFFECT` (a step is flagged only if removing
+  it, and removing all flagged steps together, leaves the measured distribution identical; skipped when a step
+  can't be removed without breaking another).
+* One naming convention: people see canvas labels (Q1, Q2) in every view and in code **comments**; code keeps
+  0-based indices, and a legend line (`# Qubits: Q1 = qubit 0, …`) ties them together.
+* A run's `canvas_json` now carries the concept steps (`concepts.nodes`), and **📂 Open run** in the Steps panel reopens
+  a saved run file.
+* Step ids are allocated only once a step is fully built (no gaps from rejected drafts). A step that another step
+  refers to (Uncompute / Mark via) can't be removed or wrapped; the compiler also rejects an Uncompute that points
+  into a wrapped step (`E_UNCOMPUTE_REF`).
+* The reviewed run is kept as a regression fixture: `backend/tests/fixtures/runs/f9e60a7115d2.json`, `tests/test_faithfulness.py`.
+
+Runs saved before this change have an empty `canvas_json` for concept circuits and can't be reopened.
+
 ## Not verified / known limits
 
 * **IonQ API shape.** `docs.ionq.com` was not reachable from the build sandbox. The IonQ lowering reuses gate shapes already present in `ionq_runner.py` (`h x z cnot t ti mcx`) and adds `y s si rx ry rz` with a `"rotation"` key. **Please check `"rotation"` and the extra gate names against the current IonQ docs before submitting real jobs.** Everything is tested for *equivalence* (the lowered gate list, interpreted with Qiskit, equals the L2 circuit up to global phase), not against IonQ itself.
+* Effect analysis is exact but limited: it stops at the first measurement or Reset, and is skipped above 12 qubits (the step then shows no computed claim, only the generic sentence).
 * On IonQ, Reset, measuring a qubit twice, and using a qubit after measuring it are refused with a plain explanation (they run on Aer).
 * Uncontrolled `P(θ)` becomes `rz(θ)` for IonQ (differs by an unobservable global phase); controlled phases are decomposed exactly.
 * The UI has no automated tests; it was exercised end-to-end in a real browser (all 14 problems driven through the interface).

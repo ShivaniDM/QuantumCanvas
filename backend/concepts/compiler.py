@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .analysis import analyse
 from .emit_pseudocode import build_pseudocode, describe
 from .emit_qiskit import build_circuit, to_code, to_qasm3
 from .ionq_lower import BackendUnsupported, lower_for_ionq
@@ -66,7 +67,9 @@ def compile_document(raw: dict, *, backend: str | None = None, with_qasm: bool =
 
     low = lower_document(doc)
     index_of = {n.id: i + 1 for i, n in enumerate(doc.operations)}
-    labels = {n.id: describe(n, index_of)[0] for n in doc.operations}
+    # Code comments name the action only. The "→ what it does" clause is a template claim, and a comment in
+    # copy-pasted code must never assert something the circuit may not do (see concepts/analysis.py).
+    labels = {n.id: describe(n, index_of)[0].split("  →")[0] for n in doc.operations}
     lines, line_gates = to_code(low, labels)
     res.lowered = low
     res.gates = [g.to_dict() for g in low.gates]
@@ -75,6 +78,28 @@ def compile_document(raw: dict, *, backend: str | None = None, with_qasm: bool =
     res.qiskit_lines, res.line_gates = lines, line_gates
     res.qiskit_py = "\n".join(lines)
     res.pseudocode = build_pseudocode(doc)
+    try:
+        facts = analyse(doc, low)
+    except Exception:                       # analysis is a bonus; never break compile
+        facts = None
+    if facts:
+        for st in res.pseudocode["steps"]:
+            f = facts.facts.get(st["id"])
+            if not f:
+                continue
+            if f.plain:
+                st["plain"] = f.plain
+            if f.effect:
+                st["effect"] = f.effect
+                st["plain"] = (st["plain"] + " Result: " + f.effect).strip()
+            st["claim_ok"] = not f.contradicted
+        names = {n.id: describe(n, index_of)[0].split("  →")[0].split(" [")[0] for n in doc.operations}
+        for oid in facts.ineffective:
+            res.warnings.append(Issue(
+                "W_UNMEASURED_EFFECT", "warning",
+                "Taking this step out would leave your measured results exactly the same: it only touches "
+                "qubits that can't influence what you measure.", oid,
+                "Measure the qubits this step works on, or remove the step."))
     if with_qasm:
         res.qasm3 = to_qasm3(low)
     if backend == "ionq":

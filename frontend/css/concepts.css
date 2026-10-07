@@ -130,3 +130,9 @@ body[data-mode="concepts"] .tool[data-prim]{display:none}
 .prob-st{font-size:.8rem;line-height:1.4}.prob-meta{font-size:.64rem;color:var(--gray);margin-top:2px;font-family:'Space Mono',monospace}
 .prob-item button{background:var(--violet2);border:1px solid var(--violet);color:var(--violet);border-radius:7px;padding:5px 12px;font-size:.74rem;cursor:pointer}
 @media (max-width:1000px){.how-cols{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.steps-head{display:flex;justify-content:space-between;align-items:center}
+.open-run{background:none;border:1px solid var(--border);color:var(--gray);border-radius:6px;padding:2px 8px;font-size:.62rem;cursor:pointer;font-family:'DM Sans',sans-serif;text-transform:none;letter-spacing:0}
+.open-run:hover{color:var(--white);border-color:var(--gray)}
+.step-effect{font-size:.66rem;color:var(--teal);margin-top:3px;line-height:1.4;font-family:'Space Mono',monospace}
+.step-effect.lied{color:var(--amber)}
