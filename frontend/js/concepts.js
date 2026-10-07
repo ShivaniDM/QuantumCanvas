@@ -14,6 +14,7 @@ const QCConcepts = (() => {
     compiling: false,
     timer: null,
     allowed: null,            // Set of allowed ops while a problem is active
+    history: [],              // every add / remove / edit / move, with timestamps (saved with each run)
   };
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -397,6 +398,7 @@ const QCConcepts = (() => {
       const w = res.warnings.find(w => w.op_id === node.id || w.op_id === node.body?.id);
       if (w) toast(labelize(w.message), 'warn');
     }
+    logEdit(replaced ? 'wrap' : 'add', node, replaced ? { wraps: replaced.id } : { targets: node.targets });
     cancelDraft();
     renderSteps(); refreshButtons(); updateStatusText();
     toast(`${c.name} added`, 'valid');
@@ -418,6 +420,7 @@ const QCConcepts = (() => {
     const gone = S.nodes.find(n => n.id === id);
     const dependants = gone ? idsInside(gone).flatMap(usersOf) : [];
     if (dependants.length) { toast(`Remove “${fallbackText(dependants[0])}” first: it uses this step.`, 'warn'); return; }
+    logEdit('remove', gone, { targets: gone?.targets });
     S.nodes = S.nodes.filter(n => n.id !== id);
     if (S.draft) cancelDraft();
     scheduleCompile(); refreshButtons(); updateStatusText(); renderSteps();
@@ -427,6 +430,7 @@ const QCConcepts = (() => {
     if (i < 0 || j < 0 || j >= S.nodes.length) return;
     const a = S.nodes[i], b = S.nodes[j];
     [a.seq, b.seq] = [b.seq, a.seq];
+    logEdit('move', a, { direction: dir > 0 ? 'down' : 'up' });
     S.nodes.sort((x, y) => x.seq - y.seq);
     scheduleCompile(); renderSteps();
   }
@@ -596,19 +600,30 @@ const QCConcepts = (() => {
   function closeHow() { $('how-overlay').classList.remove('open'); }
 
   // ── hooks used by state.js / ui.js ─────────────────────────────────
+  // Edit history: so a gap in the numbering (a deleted step) is explained in the run record, not a mystery.
+  function logEdit(type, node, extra) {
+    S.history.push({ t: new Date().toISOString(), type, id: node?.id ?? null, op: node?.op ?? null, ...(extra || {}) });
+    if (S.history.length > 2000) S.history.shift();
+  }
+
   // Everything needed to reopen a run: the concept steps themselves, not just the compiled result.
   function snapshot() {
     return { nodes: S.nodes.map(n => JSON.parse(JSON.stringify(n))), nextNode: S.nextNode, nextSeq: state.nextSeq,
+             legacy_ir: extractCanvasIR(state), classical_bits: 0, history: S.history.slice(),
              qubits: state.qubits.map(q => ({ id: q.id, label: q.label, x: Math.round(q.x), y: Math.round(q.y) })) };
   }
   async function loadRun(run) {
-    let canvas = run.canvas_json; if (typeof canvas === 'string') canvas = JSON.parse(canvas);
+    // accepts both formats: run record v2 (input.canvas_json, already an object) and the browser's v1 file
+    let canvas = run.schema === 'quantumcanvas.run/v2' ? run.input?.canvas_json : run.canvas_json;
+    if (typeof canvas === 'string') canvas = JSON.parse(canvas);
     const c = canvas?.concepts;
     if (!c || !Array.isArray(c.nodes)) throw new Error('This run file has no concept steps saved with it (it was saved before reopening was supported).');
     clearCanvas(); setMode('concepts');
     const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
     (c.qubits || []).forEach((q, i) => placeQubit(q.x ?? wrap.width / 2 + i * 120, q.y ?? wrap.height / 2));
     S.nodes = c.nodes; S.nextNode = c.nextNode || (c.nodes.length + 1); state.nextSeq = c.nextSeq ?? c.nodes.length;
+    S.history = Array.isArray(c.history) ? c.history.slice() : [];
+    logEdit('open_run', null, { run_id: run.run_id || null });
     await compileNow(); refreshButtons(); updateStatusText();
     toast(`Opened run ${run.run_id || ''} with ${S.nodes.length} steps`, 'valid');
   }
@@ -618,7 +633,7 @@ const QCConcepts = (() => {
     try { await loadRun(JSON.parse(await f.text())); } catch (err) { toast(err.message, 'error'); }
   }
 
-  function reset() { S.nodes = []; S.nextNode = 1; S.last = null; cancelDraft(); renderSteps(); refreshButtons(); }
+  function reset() { if (S.nodes.length) logEdit('clear', null, { removed: S.nodes.map(n => n.id) }); S.nodes = []; S.nextNode = 1; S.last = null; cancelDraft(); renderSteps(); refreshButtons(); }
   const blocksQubitDelete = () => S.nodes.length > 0 || (active() && legacyOpsCount() > 0);
   function onCanvasChange() { if (active()) { scheduleCompile(); refreshButtons(); updateStatusText(); } }
 

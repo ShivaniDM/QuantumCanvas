@@ -6,6 +6,10 @@ Routes:
   GET  /job/{id}     — poll IonQ job status
   POST /cost         — dry-run cost estimate for QPU hardware
   POST /qasm         — export generated Qiskit as OpenQASM 2.0 text
+  GET  /runs/{id}    — the stored run record (quantumcanvas.run/v2)
+  POST /runs/{id}/replay — recompile a stored run and compare
+  POST /explain      — template explanation (+ optional grounded LLM text, claim-checked)
+  POST /research/event — consented research events (off by default)
   POST /compile      — Concept IR -> validation, pseudocode, Qiskit, gates + trace (no side effects)
   GET  /problems     — problem bank (statements, allowed concepts, hints; no answers)
   POST /check-problem — grade a Concept IR solution against a problem
@@ -23,6 +27,8 @@ from ionq_runner import IonQRunner, JobStatus
 from concepts    import compile_document
 from concepts.migrate import merge_canvas
 import problems as problem_bank
+import executor
+from runlog import log_event
 
 app = FastAPI(title="QuantumCanvas API", version="1.0.0")
 
@@ -57,16 +63,23 @@ class ExecuteRequest(BaseModel):
     qiskit_py:      str
     backend:        str   # "aer" | "simulator" | "ionq" | "qpu"
     shots:          int   = 1000
+    session_id:     str | None = None
+    user:           str | None = None
+    parent_run_id:  str | None = None
     # Optional Concept IR v0.3 document. When present the circuit is compiled from it
     # (no exec() of source text, IonQ gates come straight from the compiler) and
     # qiskit_py is only archived.
     concept_ir:     dict | None = None
 
 class ExecuteResponse(BaseModel):
-    run_id:   str
+    run_id:   str                  # circuit folder id (logs/runs/<run_id>/), unchanged for older clients
+    record_id: str | None = None   # this execution's run-record id (quantumcanvas.run/v2)
     counts:   dict | None = None   # synchronous result (simulator)
     job_id:   str | None  = None   # async job ID (IonQ hardware)
     status:   str = "ok"
+    flags:    list = []            # e.g. backend_mismatch, result_inconsistent, code_mismatch
+    math:     dict | None = None   # math-layer summary
+    save_error: str | None = None  # set when the run record could not be saved (never silent)
 
 class JobResponse(BaseModel):
     job_id:  str
@@ -75,6 +88,10 @@ class JobResponse(BaseModel):
     run_id:  str | None  = None
     error:   str | None  = None
     raw:     dict | None = None   # full IonQ job object (hardware metadata)
+    record_id: str | None = None
+    flags:   list = []
+    math:    dict | None = None
+    save_error: str | None = None
 
 class CompileRequest(BaseModel):
     """Either a full Concept IR `document`, or the canvas' legacy IR plus its new concept `nodes`
@@ -147,102 +164,8 @@ async def log_circuit(req: LogCircuitRequest):
 
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest):
-    circuit_hash = compute_circuit_hash(req.ir_json)
-    logger = ArtifactLogger()
-    run_id, _ = logger.open_run(circuit_hash)
-
-    try:
-        # Save input artifacts only if this circuit hasn't been saved yet —
-        # avoids clobbering with identical content on repeat runs.
-        if not logger.has_core_artifacts():
-            logger.save("canvas.json",    req.canvas_json)
-            logger.save("ir.json",        req.ir_json)
-            logger.save("pseudocode.txt", req.pseudocode_txt)
-            logger.save("qiskit.py",      req.qiskit_py)
-
-        logger.record_run(circuit_hash, req.backend, req.shots)
-        logger.log(f"Run started — backend={req.backend} shots={req.shots} hash={circuit_hash[:12]}…")
-
-        results_file = f"results_{req.backend}.json"
-
-        concept = None
-        if req.concept_ir is not None:
-            concept = compile_document(req.concept_ir,
-                                       backend="ionq" if req.backend in ("simulator", "ionq", "qpu") else None)
-            if not concept.ok:
-                raise HTTPException(status_code=400, detail="; ".join(e.message for e in concept.errors))
-            logger.save("concept_ir.json", req.concept_ir)
-            logger.log(f"Compiled Concept IR — {len(concept.gates)} gates")
-            if req.backend in ("simulator", "ionq", "qpu") and concept.ionq is None:
-                raise HTTPException(status_code=400, detail=" ".join(
-                    w.message for w in concept.warnings if w.code == "W_BACKEND_UNSUPPORTED")
-                    or "This circuit can't be lowered for IonQ.")
-        ionq_circuit = concept.ionq if concept else None
-
-        # Local Qiskit Aer simulator — runs the generated circuit in-process
-        # and returns an exact histogram synchronously. No IonQ / API key needed.
-        if req.backend == "aer":
-            from aer_runner import run_aer, run_aer_circuit
-            if concept:
-                from concepts.emit_qiskit import build_circuit
-                counts = run_aer_circuit(build_circuit(concept.lowered), req.shots, logger=logger)
-            else:
-                counts = run_aer(req.qiskit_py, req.shots, logger=logger)
-            results_artifact = dict(counts)
-            results_artifact["circuit_hash"] = circuit_hash
-            logger.save(results_file, results_artifact)
-            logger.log(f"Aer simulator complete — {sum(counts.values())} shots")
-            return ExecuteResponse(run_id=run_id, counts=counts)
-
-        runner = IonQRunner(
-            api_key    = settings.IONQ_API_KEY,
-            endpoint   = settings.IONQ_ENDPOINT,
-            logger     = logger,
-        )
-
-        if req.backend == "simulator":
-            # Synchronous: submit to IonQ cloud simulator, poll until done
-            counts = runner.run_simulator(
-                qiskit_code  = req.qiskit_py,
-                shots        = req.shots,
-                ionq_circuit = ionq_circuit,
-            )
-            results_artifact = dict(counts)
-            results_artifact["circuit_hash"] = circuit_hash
-            logger.save(results_file, results_artifact)
-            logger.log(f"Simulator complete — {sum(counts.values())} shots")
-            return ExecuteResponse(run_id=run_id, counts=counts)
-
-        elif req.backend == "ionq":
-            # Async: submit to the IonQ cloud simulator, return job_id for polling
-            job_id = runner.submit_ionq_sim(
-                qiskit_code  = req.qiskit_py,
-                shots        = req.shots,
-                ionq_circuit = ionq_circuit,
-            )
-            logger.log(f"IonQ job submitted — job_id={job_id}")
-            _job_run_map[job_id] = {"run_id": run_id, "backend": req.backend, "circuit_hash": circuit_hash}
-            return ExecuteResponse(run_id=run_id, job_id=job_id)
-
-        elif req.backend == "qpu":
-            # User confirmed QPU run after seeing cost estimate
-            job_id = runner.submit_qpu(
-                qiskit_code  = req.qiskit_py,
-                shots        = req.shots,
-                ionq_circuit = ionq_circuit,
-            )
-            logger.log(f"QPU job submitted — job_id={job_id}")
-            _job_run_map[job_id] = {"run_id": run_id, "backend": req.backend, "circuit_hash": circuit_hash}
-            return ExecuteResponse(run_id=run_id, job_id=job_id)
-
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown backend: {req.backend}")
-
-    except HTTPException:
-        raise                      # keep deliberate 4xx responses (e.g. invalid concept circuit)
-    except Exception as e:
-        logger.error(str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    """Validate → compile → execute → math-check → save ONE run record (plan 9c). See executor.py."""
+    return ExecuteResponse(**executor.execute(req.model_dump()))
 
 
 # In-memory job→run mapping (production: use a DB or Redis)
@@ -250,7 +173,9 @@ _job_run_map: dict[str, dict] = {}
 
 @app.get("/job/{job_id}", response_model=JobResponse)
 async def poll_job(job_id: str):
-    entry        = _job_run_map.get(job_id) or {}
+    live = executor.JOB_MAP.get(job_id)
+    entry = _job_run_map.get(job_id) or ({"run_id": live["folder"], "backend": live["backend"],
+                                          "circuit_hash": live["circuit_hash"]} if live else {})
     run_id       = entry.get("run_id")
     backend      = entry.get("backend", "ionq")
     circuit_hash = entry.get("circuit_hash")
@@ -272,12 +197,17 @@ async def poll_job(job_id: str):
             logger.save(f"results_{backend}.json",        status.counts)
             logger.log(f"Job {job_id} completed — saving artifacts")
 
+        extra = executor.on_job_status(job_id, status)
         return JobResponse(
             job_id = job_id,
             status = status.status,
             counts = status.counts,
             run_id = run_id,
             raw    = status.raw_response,
+            record_id  = extra.get("record_id"),
+            flags      = extra.get("flags", []),
+            math       = extra.get("math"),
+            save_error = extra.get("save_error"),
         )
 
     except Exception as e:
@@ -362,9 +292,113 @@ async def check_problem(req: CheckProblemRequest):
     return problem_bank.check_solution(p, req.document)
 
 
+class ExplainRequest(BaseModel):
+    record_id: str | None = None      # explain a stored run (its math log and counts), or...
+    document: dict | None = None      # ...a Concept IR (+ counts) that was not run yet
+    counts: dict | None = None
+    labels: list[str] = []            # canvas qubit names, so the text says Q1/Q2 like the screen does
+    use_llm: bool = True
+
+
+@app.post("/explain")
+async def explain_run(req: ExplainRequest):
+    """Template explanation (always) + optional grounded LLM explanation that must pass the claim checker.
+    The LLM key is read from server-side env vars only. Never returns prompts, keys or provider errors with secrets."""
+    from explain.service import explain as do_explain
+    from mathlayer import analyze_document
+    rec = None
+    if req.record_id:
+        rec = executor.store().load(req.record_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail=f"No run record {req.record_id}")
+        doc, counts = rec["input"].get("ir_migrated") or rec["input"]["ir_json"], rec["results"]["counts"]
+        log = rec["results"].get("math_log")
+        if not isinstance(doc, dict) or doc.get("operations") is None:
+            raise HTTPException(status_code=400, detail="This run has no concept circuit to explain.")
+    elif req.document:
+        doc, counts, log = req.document, req.counts, None
+    else:
+        raise HTTPException(status_code=400, detail="Send record_id, or a document.")
+    if not log or not log.get("steps"):
+        log = analyze_document(doc, results=counts, code_check=False)
+    if not log.get("steps"):
+        raise HTTPException(status_code=400, detail="This circuit is too large for step-by-step explanations.")
+    import time
+    t0 = time.perf_counter()
+    result = do_explain(log, doc, counts, req.labels, settings, use_llm=req.use_llm)
+    log_event("explain", run_id=req.record_id, stage="explain", duration_ms=(time.perf_counter() - t0) * 1000,
+              llm_status=(result["llm"] or {}).get("status"), provider=(result["llm"] or {}).get("provider"),
+              cache_hit=(result["llm"] or {}).get("cache_hit"))
+    save_error = None
+    if rec is not None:                                                    # append the explanation to the run (new revision)
+        try:
+            def upd(r):
+                r["explanation"] = {"template": result["template"]["steps"] and [{"summary": result["template"]["summary"], "steps": result["template"]["steps"]}],
+                                    "llm": result["llm"]}
+                if (result["llm"] or {}).get("status") == "rejected":
+                    r["flags"].append({"flag": "llm_claim_check_failed", "detail": "; ".join(v["detail"] for v in result["llm"]["claim_check"]["violations"])[:500]})
+            executor.store().append_revision(req.record_id, upd)
+        except Exception as e:
+            save_error = f"The explanation could not be added to the run record: {e}"
+            log_event("record_save_failed", level="error", run_id=req.record_id, stage="save", message=str(e))
+    llm_pub = {k: v for k, v in (result["llm"] or {}).items() if k not in ("prompt", "response", "attempts")}
+    llm_pub["attempts"] = [{"provider": a.get("provider"), "kind": a.get("kind"), "ok": a.get("ok")} for a in (result["llm"] or {}).get("attempts", [])]
+    return {"template": result["template"], "llm": llm_pub, "save_error": save_error}
+
+
+@app.get("/runs/{run_id}")
+async def get_run_record(run_id: str, revision: int | None = None):
+    """The stored run record (latest revision unless one is asked for). Secrets were redacted before it was written."""
+    rec = executor.store().load(run_id, revision)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"No run record {run_id}")
+    return rec
+
+
+@app.post("/runs/{run_id}/replay")
+async def replay_run(run_id: str):
+    """Audit: recompile the stored IR and compare with what was recorded."""
+    from runlog.replay import replay
+    rec = executor.store().load(run_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"No run record {run_id}")
+    return replay(rec)
+
+
+class ResearchEvent(BaseModel):
+    study_id: str
+    consent: bool = False
+    session: str = ""
+    event: str
+    data: dict = {}
+
+
+@app.post("/research/event")
+async def research_event(ev: ResearchEvent):
+    """Research interaction logging (Paper A). OFF unless RESEARCH_LOGGING=on AND the event carries consent.
+    Stored apart from run records, pseudonymous (session id is hashed). Confirm IRB requirements before any study use."""
+    import hashlib, json, datetime, re
+    from pathlib import Path
+    if str(settings.RESEARCH_LOGGING).lower() != "on" or not ev.consent:
+        return {"stored": False, "reason": "research logging is off or consent is missing"}
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", ev.study_id):
+        raise HTTPException(status_code=400, detail="invalid study id")
+    d = Path(settings.LOG_DIR) / "research"
+    d.mkdir(parents=True, exist_ok=True)
+    row = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "study_id": ev.study_id,
+           "pid": hashlib.sha256(("qc-study:" + ev.session).encode()).hexdigest()[:16], "event": ev.event[:80], "data": ev.data}
+    from runlog import redact
+    with open(d / f"{ev.study_id}.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(redact(row)) + "\n")
+    return {"stored": True}
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "ionq_configured": bool(settings.IONQ_API_KEY)}
+    from explain.llm import configured_providers
+    return {"status": "ok", "ionq_configured": bool(settings.IONQ_API_KEY),
+            "llm_configured": len(configured_providers(settings)),          # how many providers; never the values
+            "research_logging": str(settings.RESEARCH_LOGGING).lower() == "on"}
 
 
 if __name__ == "__main__":

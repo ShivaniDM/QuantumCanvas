@@ -18,7 +18,7 @@ SHOTS = 20000
 
 
 def load_problems() -> list[dict]:
-    return json.loads(BANK.read_text())
+    return json.loads(BANK.read_text(encoding="utf-8"))
 
 
 def get_problem(pid: str) -> dict | None:

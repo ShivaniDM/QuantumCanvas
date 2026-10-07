@@ -33,7 +33,7 @@ def measures(qc):
 
 @pytest.mark.parametrize("path", FIX, ids=lambda p: p.stem)
 def test_migrated_circuit_matches_legacy_generator(path):
-    fx = json.loads(path.read_text())
+    fx = json.loads(path.read_text(encoding="utf-8"))
     doc = migrate_legacy_ir(fx["ir"])
     res = compile_document(doc)
     assert res.ok, [e.message for e in res.errors]
@@ -47,7 +47,7 @@ def test_migrated_circuit_matches_legacy_generator(path):
 def test_consecutive_boost_clicks_each_apply_a_diffuser():
     """Deliberate difference: the legacy generator merged back-to-back Boost clicks into ONE
     diffuser although its pseudocode said 'N x'. v0.3 applies one diffuser per click."""
-    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "double_boost.json").read_text())
+    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "double_boost.json").read_text(encoding="utf-8"))
     doc = migrate_legacy_ir(fx["ir"])
     assert [o["op"] for o in doc["operations"]].count("boost") == 2
     boosts = [o for o in doc["operations"] if o["op"] == "boost"]
@@ -63,7 +63,7 @@ def test_alias_name_from_the_plan():
 
 
 def test_merge_orders_new_nodes_by_click_sequence():
-    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "grover_2q_mark_q2.json").read_text())
+    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "grover_2q_mark_q2.json").read_text(encoding="utf-8"))
     ir = fx["ir"]
     # the legacy clicks used seq 0..5; slip a new Flip between Shake(q2)=seq1 and Mark=seq2
     flip = {"id": "N1", "op": "flip", "targets": [0], "seq": 1.5}
@@ -75,7 +75,7 @@ def test_merge_orders_new_nodes_by_click_sequence():
 
 
 def test_new_node_between_marks_splits_the_oracle():
-    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "grover_3q_mark_q1_q3.json").read_text())
+    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "grover_3q_mark_q1_q3.json").read_text(encoding="utf-8"))
     marks = [o for o in migrate_legacy_ir(fx["ir"])["operations"] if o["op"] == "mark"]
     assert len(marks) == 1 and marks[0]["params"]["value"] == 5        # q1 and q3 marked together
     split = merge_canvas(fx["ir"], [{"id": "N", "op": "flip", "targets": [1], "seq": 3.5}])
@@ -83,7 +83,7 @@ def test_new_node_between_marks_splits_the_oracle():
 
 
 def test_legacy_measure_uses_classical_bit_equal_to_qubit_index():
-    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "bell_pair.json").read_text())
+    fx = json.loads((Path(__file__).parent / "fixtures" / "legacy" / "bell_pair.json").read_text(encoding="utf-8"))
     doc = migrate_legacy_ir(fx["ir"])
     m = [o for o in doc["operations"] if o["op"] == "measure"][0]
     assert m["classical"] == m["targets"] and doc["classical_bits"] == 2

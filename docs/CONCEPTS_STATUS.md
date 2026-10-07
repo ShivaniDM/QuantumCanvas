@@ -64,10 +64,29 @@ template pseudocode could state things the circuit did not do. Fixes, all comput
 
 Runs saved before this change have an empty `canvas_json` for concept circuits and can't be reopened.
 
+## Logging, math layer and explanation layer (plan 9a, 9b, 9c)
+
+| Plan | Delivered | Where |
+|---|---|---|
+| M0.3 logging | Run record **v2**: one per execution, append-only revisions, validated against a JSON Schema before saving. Identity, versions (git SHA, compiler, IR schema, math layer, qiskit, qiskit-aer), input (canvas with the concept steps, IR, validator errors/warnings), compile (gates, trace, canonical Qiskit, QASM 3, pseudocode, IonQ circuit), execution (**backend requested vs backend the provider executed**, job id, status, shots, **seed**, **transpiled circuit** with depth / 2-qubit count / basis gates, timings, **full raw provider response**), results (counts, math log, result check), explanation (template, LLM prompt + response + claim check + tokens + latency + cache + fallback), errors by stage, flags, **edit history**. | `backend/runlog/`, `backend/executor.py` |
+| | Failed runs still produce a record (validate / compile / submit / fetch). A save that fails is returned as `save_error` and shown in red in the UI; nothing is dropped silently. Stack traces go to the server log only. | `executor.py`, `execute.js` |
+| | `backend_mismatch` is flagged from the provider's own response (the QPU-requested-but-simulator-executed case), `backend_executed_unknown` when the provider names nothing. | `runlog/record.py` |
+| | Secrets (env values, secret-looking keys, Bearer tokens, API-key shapes, emails, URL credentials) are redacted before anything is written, including the older per-circuit artifact files. Big blobs are gzip-compressed beside the record with a checksum pointer, never truncated. Structured JSON-lines server log (`logs/server.jsonl`) joins to a run by `run_id`. | `runlog/redact.py`, `serverlog.py`, `store.py` |
+| | `GET /runs/{id}` and `POST /runs/{id}/replay` (recompile → identical code and prediction; canvas↔IR round trip; Aer counts reproduced from the stored seed). Research events (`POST /research/event`) are **off** unless `RESEARCH_LOGGING=on` and the event carries consent; stored apart, pseudonymous. **Check IRB requirements before any study use.** | `app.py`, `runlog/replay.py` |
+| M0.5 math layer | `backend/mathlayer/` is the seed `math_layer.py` ported (the golden log for run f9e60a7115d2 is a test) and extended to every concept incl. Control, Compare, Mark via, Uncompute, Fourier, Add, Reset, Correct (exact measurement-branching for dynamic circuits). The emitted code is parsed with `ast` (never executed) and compared, step by step, with an **independent** reference semantics (it does not import the compiler). Runs after every execution; the step log is stored with the run; broken contracts and idle steps are shown in the UI. | `backend/mathlayer/` |
+| M7 explanation layer | The verified explanation is rendered **from the step log** (`explain/template.py`; the live pseudocode now uses it too, replacing the earlier `analysis.py`). Optional AI text via any OpenAI-compatible provider (`LLM_*`), primary → fallback → template; deterministic **claim checker** (numbers + direction words per step, negation-aware); contradicting text is discarded and recorded; cache; daily budget. | `backend/explain/` |
+
+New endpoints: `POST /explain`, `GET /runs/{id}`, `POST /runs/{id}/replay`, `POST /research/event`.
+Setup of the key: `docs/LLM_SETUP.md` (+ `python backend/tools/check_llm.py`).
+
+Bugs found by the new layers while building them (all fixed, all tested): the Mark-via reference was wrong (the step on its own is Compare†·Phase, only Compare + Mark is diagonal); the claim checker once accepted an invented "99%" because entropy bits were read as percentages; redaction regexes backtracked catastrophically on a 200 KB string.
+
 ## Not verified / known limits
 
 * **IonQ API shape.** `docs.ionq.com` was not reachable from the build sandbox. The IonQ lowering reuses gate shapes already present in `ionq_runner.py` (`h x z cnot t ti mcx`) and adds `y s si rx ry rz` with a `"rotation"` key. **Please check `"rotation"` and the extra gate names against the current IonQ docs before submitting real jobs.** Everything is tested for *equivalence* (the lowered gate list, interpreted with Qiskit, equals the L2 circuit up to global phase), not against IonQ itself.
 * Effect analysis is exact but limited: it stops at the first measurement or Reset, and is skipped above 12 qubits (the step then shows no computed claim, only the generic sentence).
+* The LLM path is tested with mocked and stub providers. A live Cloudflare/Groq call has to be checked by you with `python backend/tools/check_llm.py` (the sandbox has no key and no route to those hosts).
+* An async IonQ job's run record is attached in memory: if the backend restarts between submit and completion, the final revision is not written (the first revision, with the job id, is).
 * On IonQ, Reset, measuring a qubit twice, and using a qubit after measuring it are refused with a plain explanation (they run on Aer).
 * Uncontrolled `P(θ)` becomes `rz(θ)` for IonQ (differs by an unobservable global phase); controlled phases are decomposed exactly.
 * The UI has no automated tests; it was exercised end-to-end in a real browser (all 14 problems driven through the interface).

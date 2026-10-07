@@ -12,7 +12,7 @@ from conftest import compiled, make_doc, node, warn_codes
 from concepts import compile_document
 from concepts.angles import pi
 
-RUN = json.loads((Path(__file__).parent / "fixtures" / "runs" / "f9e60a7115d2.json").read_text())
+RUN = json.loads((Path(__file__).parent / "fixtures" / "runs" / "f9e60a7115d2.json").read_text(encoding="utf-8"))
 IR = json.loads(RUN["ir_json"])
 
 
@@ -64,13 +64,12 @@ def test_unmeasured_effect_flags_exactly_the_four_idle_steps():
 
 def test_flagged_steps_really_are_irrelevant():
     """Delete the flagged steps and the measured distribution is identical (the reviewer's claim, checked)."""
-    from concepts.analysis import _distribution_for, _without
-    from concepts.schema import parse_document
-    doc = parse_document(IR)
-    base = _distribution_for(doc)
-    slim = _distribution_for(_without(doc, {"N1", "N4", "N5", "N6"}))
-    assert base[1] == slim[1] and all(abs(a - b) < 1e-9 for a, b in zip(base[0], slim[0]))
-    assert abs(base[0][1] - 0.10) < 1e-9
+    from mathlayer import analyze_document
+    full = analyze_document(IR, code_check=False)
+    slim_ir = {**IR, "operations": [o for o in IR["operations"] if o["id"] not in {"N1", "N4", "N5", "N6"}]}
+    slim = analyze_document(slim_ir, code_check=False)
+    assert slim["predicted"] == full["predicted"]
+    assert abs(full["predicted"]["1"] - 0.10) < 1e-9
 
 
 def test_two_qubit_search_boost_raises_and_says_so():
