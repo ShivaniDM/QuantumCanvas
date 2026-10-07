@@ -520,3 +520,35 @@
 .ex-note{color:var(--gray);margin-top:8px}.ex-note.err{color:var(--rose)}
 .ex-fine{font-size:.62rem;color:var(--dim);margin-top:6px}
 .ex-tmpl{margin-top:8px}.ex-tmpl summary{cursor:pointer;color:var(--gray)}
+
+/* ── per-step "?" and the Math tab ─────────────────────────────── */
+.pc-tabs{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--border,#2a2f45)}
+.pc-tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--gray);padding:8px 14px;font-family:'Space Mono',monospace;font-size:.68rem;cursor:pointer}
+.pc-tabs button.on{color:var(--teal);border-bottom-color:var(--teal)}
+.pc-tabs button:disabled{opacity:.4;cursor:not-allowed}
+.pc-ask{margin-left:8px;width:18px;height:18px;border-radius:50%;border:1px solid var(--violet);background:none;color:var(--violet);font-size:.65rem;line-height:1;cursor:pointer;padding:0;vertical-align:middle}
+.pc-ask:hover{background:var(--violet);color:#fff}
+.pc-ask-box{margin-top:6px;font-size:.74rem;line-height:1.55}
+.pc-math{padding:12px 14px;overflow:auto}
+.mt-intro{font-size:.72rem;color:var(--gray);margin-bottom:10px;line-height:1.55}
+.mt-start{margin-top:6px}
+.mt-card{border:1px solid var(--border,#2a2f45);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+.mt-head{display:flex;align-items:center;gap:8px;font-size:.78rem;margin-bottom:6px}
+.mt-n{font-family:'Space Mono',monospace;font-size:.58rem;color:var(--gray);text-transform:uppercase;letter-spacing:.06em}
+.mt-eq{font-family:'Space Mono',monospace;font-size:.7rem;color:var(--teal);margin:4px 0 8px;line-height:1.6}
+.mt-sec{font-size:.6rem;color:var(--gray);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 4px}
+.mt-sub{text-transform:none;letter-spacing:0;color:var(--dim)}
+.mt-note{font-size:.72rem;color:var(--gray);margin:6px 0}.mt-note.err{color:var(--rose)}
+.mt-row,.mt-prod,.mt-states{display:flex;align-items:center;gap:10px;flex-wrap:wrap;overflow-x:auto}
+.mt-actions code,.mt-ket,.mt-bp{font-family:'Space Mono',monospace;font-size:.72rem}
+.mt-actions div{margin:2px 0}
+.mt-mat{border-collapse:separate;border-spacing:10px 3px;border-left:2px solid var(--gray);border-right:2px solid var(--gray);border-radius:6px;font-family:'Space Mono',monospace;font-size:.7rem}
+.mt-mat td{text-align:center;white-space:nowrap}.mt-mat td.z{color:var(--dim)}
+.mt-col td.mt-lbl{color:var(--dim);font-size:.6rem;text-align:left}
+.mt-op,.mt-arrow{color:var(--gray);font-size:1rem}
+.mt-state{min-width:140px}.mt-sname{font-size:.58rem;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+.mt-branch{margin-bottom:6px}.mt-bp{color:var(--amber);margin-right:6px}
+.mt-bars{margin-top:3px}
+.mt-bar{display:flex;align-items:center;gap:6px;font-family:'Space Mono',monospace;font-size:.6rem;color:var(--gray)}
+.mt-bar-l{width:42px}.mt-bar-t{flex:1;height:5px;background:rgba(255,255,255,.07);border-radius:3px;min-width:60px;max-width:160px}
+.mt-bar-t span{display:block;height:100%;background:var(--teal);border-radius:3px}.mt-bar-v{width:34px;text-align:right}

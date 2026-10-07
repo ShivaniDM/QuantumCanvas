@@ -346,6 +346,60 @@ async def explain_run(req: ExplainRequest):
     return {"template": result["template"], "llm": llm_pub, "save_error": save_error}
 
 
+class MathRequest(BaseModel):
+    document: dict                    # a Concept IR (what /compile returned as "document")
+    labels: list[str] = []
+
+
+def _checked_doc(doc: dict):
+    from mathlayer.layer import normalise_ir
+    try:
+        return normalise_ir(doc)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"This is not a valid concept circuit: {e}")
+
+
+@app.post("/math")
+async def math_steps(req: MathRequest):
+    """Per-step maths for the Math tab: exact kets, gate matrices and U.state calculations. Deterministic, no AI."""
+    from mathlayer.notation import step_math
+    doc = _checked_doc(req.document)
+    try:
+        return step_math(doc, req.labels or None)
+    except Exception as e:
+        log_event("math_failed", level="error", stage="math", message=str(e)[:300])
+        raise HTTPException(status_code=400, detail="The maths for this circuit could not be worked out exactly.")
+
+
+class ExplainStepRequest(BaseModel):
+    document: dict
+    step_id: str
+    counts: dict | None = None
+    labels: list[str] = []
+    use_llm: bool = True
+
+
+@app.post("/explain-step")
+async def explain_one_step(req: ExplainStepRequest):
+    """The "?" button: exact maths + template sentence for one step, plus an optional claim-checked AI paragraph."""
+    from explain.step import explain_step
+    from mathlayer import analyze_document
+    from mathlayer.notation import step_math
+    doc = _checked_doc(req.document)
+    if req.step_id not in {o["id"] for o in doc["operations"]}:
+        raise HTTPException(status_code=404, detail=f"No step {req.step_id}")
+    labels = req.labels or [f"Q{i + 1}" for i in range(doc["qubits"])]
+    log = analyze_document(doc, results=req.counts, code_check=False)
+    if not log.get("steps"):
+        raise HTTPException(status_code=400, detail="This circuit is too large for step-by-step explanations.")
+    sm = next((s for s in step_math(doc, labels)["steps"] if s["id"] == req.step_id), {})
+    res = explain_step(log, doc, req.step_id, sm, req.counts, labels, settings, use_llm=req.use_llm)
+    L = res["llm"]
+    log_event("explain_step", stage="explain", step=req.step_id, llm_status=L.get("status"), provider=L.get("provider"))
+    L["attempts"] = [{"provider": a.get("provider"), "kind": a.get("kind"), "ok": a.get("ok"), "error": (a.get("error") or "")[:300] or None} for a in L.get("attempts", [])]
+    return res
+
+
 @app.get("/runs/{run_id}")
 async def get_run_record(run_id: str, revision: int | None = None):
     """The stored run record (latest revision unless one is asked for). Secrets were redacted before it was written."""
