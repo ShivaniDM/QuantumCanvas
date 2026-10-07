@@ -5,6 +5,7 @@
 const STRIPE={INITIALIZE:'s-init',SHAKE:'s-shake',MARK:'s-mark',BOOST:'s-boost',LINK:'s-link',LOOK:'s-look'};
 
 function openPseudocodePanel(){
+  if(window.QCConcepts && QCConcepts.active()){ QCConcepts.openPseudocode(); return; }
   const ir  = extractCanvasIR(state);
   validateIR(ir);
   let doc=null;

@@ -6,6 +6,7 @@
 function pcQiskit(){
   const ir = window._pcLastIR;
   if(!ir||!ir.validation.ok){ toast('Fix errors first','error'); return; }
+  if(ir._concept){ _renderQiskitPanel(ir, QCConcepts.docFor(ir._concept), QCConcepts.qiskitFor(ir._concept)); return; }
   const doc    = generatePseudocode(ir);
   const qiskit = generateQiskit(ir, doc);
   _renderQiskitPanel(ir, doc, qiskit);
@@ -51,7 +52,7 @@ function _renderQiskitPanel(ir, doc, qiskit){
     <pre class="qk-pre" id="${copyId}">${buildHighlightedCode(qiskit)}</pre>
   </div>
 
-  <div class="qk-map-section">
+  ${ir._concept ? '' : `<div class="qk-map-section">
     <div class="qk-map-head">QuantumCanvas → Qiskit mapping</div>
     <table class="qk-map-tbl">
       <thead><tr><th>Canvas primitive</th><th>Qiskit gate(s)</th><th>Status</th></tr></thead>
@@ -59,11 +60,11 @@ function _renderQiskitPanel(ir, doc, qiskit){
         <tr><td>◎ SHAKE</td><td><code>qc.h(q)</code></td><td class="qk-impl">✓ Implemented</td></tr>
         <tr><td>◈ MARK</td><td><code>qc.z(q)</code></td><td class="qk-impl">✓ Implemented</td></tr>
         <tr><td>▲ BOOST</td><td><code>H · X · CZ · X · H</code> (diffusion)</td><td class="qk-impl">✓ Implemented</td></tr>
-        <tr><td>⋈ LINK</td><td><code>qc.cx(ctrl, tgt)</code></td><td class="qk-impl">✓ Implemented</td></tr>
-        <tr><td>◙ LOOK</td><td><code>qc.measure(q, c)</code></td><td class="qk-impl">✓ Implemented</td></tr>
+        <tr><td>⋈ ENTANGLE</td><td><code>qc.cx(ctrl, tgt)</code></td><td class="qk-impl">✓ Implemented</td></tr>
+        <tr><td>◙ MEASURE</td><td><code>qc.measure(q, c)</code></td><td class="qk-impl">✓ Implemented</td></tr>
       </tbody>
     </table>
-  </div>
+  </div>`}
 
   <div class="pc-footer">
     <button class="pc-qiskit-btn" onclick="qkBackToPseudocode()">← Pseudocode</button>
@@ -76,38 +77,21 @@ function _renderQiskitPanel(ir, doc, qiskit){
 }
 
 function buildHighlightedCode(qiskit){
-  // Simple syntax highlighting via HTML spans (no external lib)
-  const keywords = /\b(from|import|for|in|if|print|def|return)\b/g;
-  const builtins = /\b(QuantumCircuit|AerSimulator|transpile|sorted)\b/g;
-  const methods  = /\.(h|x|z|cx|cz|ccx|measure|draw|run|result|get_counts)\(/g;
-  const strings  = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
-  const numbers  = /\b(\d+)\b/g;
-  const comments = /(#[^\n]*)/g;
-
+  // One pass over each (HTML-escaped) line: comments, strings, keywords, class names, gate methods, numbers.
+  // (The previous chain of replace() calls re-matched the class="..." text it had just inserted.)
+  const re = /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b(from|import|for|in|print|with|as)\b|\b(QuantumCircuit|AerSimulator|transpile|np)\b|\.(h|x|y|z|s|sdg|t|tdg|p|rx|ry|rz|cx|cy|cz|ch|ccx|cswap|crx|cry|crz|cp|mcx|mcp|swap|measure|measure_all|reset|append|if_test|draw|run|result|get_counts)(?=\()|\b(\d+(?:\.\d+)?)\b/g;
   return qiskit.lines.map((line, i) => {
     if(!line) return '';
     const remark = qiskit.remarks[i];
-    // Attach inline remark as a comment if the line itself isn't a comment
     const full = (remark && !line.startsWith('#')) ? `${line}  # ${remark}` : line;
-
-    // Escape HTML first, then inject spans
-    let s = full
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-    // Comments first (they swallow everything after #)
-    s = s.replace(/(#[^<]*)/g, '<span class="qk-c">$1</span>');
-
-    // Only style non-comment parts (crude but sufficient for display)
-    if(!line.startsWith('#')){
-      s = s
-        .replace(/\b(from|import|for|in|print)\b/g, '<span class="qk-kw">$1</span>')
-        .replace(/\b(QuantumCircuit|AerSimulator|transpile)\b/g, '<span class="qk-bi">$1</span>')
-        .replace(/\.(h|x|z|cx|cz|ccx|measure|draw|run|result|get_counts)\(/g,
-                 '.<span class="qk-fn">$1</span>(')
-        .replace(/("(?:[^"<>])*"|'(?:[^'<>])*')/g, '<span class="qk-s">$1</span>')
-        .replace(/\b(\d+)\b(?![^<]*<\/span>)/g, '<span class="qk-n">$1</span>');
-    }
-    return s;
+    const esc = full.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return esc.replace(re, (m, c, str, kw, bi, fn, num) =>
+      c   ? `<span class="qk-c">${c}</span>`  :
+      str ? `<span class="qk-s">${str}</span>` :
+      kw  ? `<span class="qk-kw">${kw}</span>` :
+      bi  ? `<span class="qk-bi">${bi}</span>` :
+      fn  ? `.<span class="qk-fn">${fn}</span>` :
+            `<span class="qk-n">${num}</span>`);
   }).join('\n');
 }
 
@@ -196,7 +180,7 @@ function _renderPC(ir,doc){
   </div>`;
 
   // raw execution timeline
-  const tlOps = { shake:'Shake', mark:'Mark', boost:'Boost', link:'Link', look:'Look' };
+  const tlOps = { shake:'Shake', mark:'Mark', boost:'Boost', link:'Entangle', look:'Measure' };
   const tlDetails = entry => {
     const q = ir.qubits.find(q=>q.id===entry.qubit);
     const lbl = q?.label || entry.qubit;

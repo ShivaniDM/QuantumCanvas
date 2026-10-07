@@ -8,8 +8,9 @@
 <link rel="stylesheet" href="css/main.css">
 <link rel="stylesheet" href="css/pseudocode.css">
 <link rel="stylesheet" href="css/user-logger.css">
+<link rel="stylesheet" href="css/concepts.css">
 </head>
-<body>
+<body data-mode="classic">
 <div class="app">
 
 <div class="topbar">
@@ -17,11 +18,16 @@
   <div class="tb-sep"></div>
   <span class="tb-tag">QA BUILD</span>
   <span class="tb-tag" style="background:var(--violet2);color:var(--violet)">RULE ENGINE v0.1</span>
+  <div class="mode-switch" id="mode-switch" title="Classic: the original five primitives. Concepts: the full concept vocabulary.">
+    <button class="active" data-mode="classic" onclick="QCConcepts.setMode('classic')">Classic</button>
+    <button data-mode="concepts" onclick="QCConcepts.setMode('concepts')">Concepts</button>
+  </div>
   <div class="tb-status" id="tb-status">
     <b id="qubit-count">0</b> qubits · select a primitive to begin
   </div>
   <button class="pc-btn"     id="pc-btn"     onclick="openPseudocodePanel()" disabled>{ } Pseudocode</button>
   <button class="exec-btn"   id="exec-btn"   onclick="openExecutePanel()"    disabled>Execute ⚡</button>
+  <button class="logs-btn" id="prob-btn" onclick="QCProblems.open()" title="Practice problems with automatic checking">🧩 Problems</button>
   <button class="logs-btn"   id="logs-btn"   onclick="QCLogger.openPanel()"  title="View runs saved in this browser">🗂 Logs</button>
   <a class="logs-btn" href="learn.html" title="Notebook + circuit sandbox" style="text-decoration:none">🎓 Learn</a>
 </div>
@@ -35,7 +41,7 @@
     <span class="tool-sym">⊕</span>
     <span class="tool-lbl">QUBIT</span>
   </div>
-  <div class="tool-sep"></div>
+  <div class="tool-sep classic-only"></div>
   <div class="tool" data-prim="shake" title="Shake — superposition" onclick="setTool('shake')">
     <span class="tool-sym">◎</span>
     <span class="tool-lbl">SHAKE</span>
@@ -48,14 +54,16 @@
     <span class="tool-sym">▲</span>
     <span class="tool-lbl">BOOST</span>
   </div>
-  <div class="tool" data-prim="link" title="Link — entangle" onclick="setTool('link')">
+  <div class="tool" data-prim="link" title="Entangle — link two qubits" onclick="setTool('link')">
     <span class="tool-sym">⋈</span>
-    <span class="tool-lbl">LINK</span>
+    <span class="tool-lbl">ENTANGLE</span>
   </div>
-  <div class="tool" data-prim="look" title="Look — measure" onclick="setTool('look')">
+  <div class="tool" data-prim="look" title="Measure — collapse to 0 or 1" onclick="setTool('look')">
     <span class="tool-sym">◙</span>
-    <span class="tool-lbl">LOOK</span>
+    <span class="tool-lbl">MEASURE</span>
   </div>
+  <div class="tool-sep classic-only"></div>
+  <div id="concept-tiles" class="concept-only"></div>
   <div class="tool-sep"></div>
   <div class="tool" title="Clear canvas" onclick="clearCanvas()" style="margin-top:auto">
     <span class="tool-sym" style="color:var(--gray);font-size:12px">⊘</span>
@@ -76,9 +84,10 @@
   <div id="hint">
     <div class="hint-sym">⊕</div>
     <p>Select <b>Qubit</b> tool and click to place qubits</p>
-    <p style="margin-top:4px;font-size:.75rem">Then apply primitives: Shake → Mark → Boost → Look</p>
+    <p style="margin-top:4px;font-size:.75rem">Then apply primitives: Shake → Mark → Boost → Measure</p>
   </div>
   <div id="toast-wrap"></div>
+  <div id="concept-draft" class="concept-draft"></div>
   <div id="result-panel">
     <div class="result-title">Measurement result</div>
     <div class="result-bars" id="result-bars"></div>
@@ -88,7 +97,13 @@
 </div>
 
 <div class="rpanel">
-  <div class="rp-section">
+  <div class="rp-section concept-only" id="steps-section">
+    <div id="problem-card" class="problem-card"></div>
+    <div class="rp-head">Steps</div>
+    <div id="steps-issues"></div>
+    <div id="steps-list" class="steps-list"></div>
+  </div>
+  <div class="rp-section classic-only">
     <div class="rp-head">Primitives</div>
     <div class="prim-item" id="pi-shake" onclick="setTool('shake')">
       <div class="prim-sym" style="background:var(--teal2)"><span style="color:var(--teal)">◎</span></div>
@@ -104,17 +119,17 @@
     </div>
     <div class="prim-item" id="pi-link" onclick="setTool('link')">
       <div class="prim-sym" style="background:var(--violet2)"><span style="color:var(--violet)">⋈</span></div>
-      <div><div class="prim-name">Link</div><div class="prim-desc">Entangle two qubits together</div><div class="prim-req" style="color:var(--violet)">Requires: first qubit shaken</div></div>
+      <div><div class="prim-name">Entangle</div><div class="prim-desc">Entangle two qubits together</div><div class="prim-req" style="color:var(--violet)">Requires: first qubit shaken</div></div>
     </div>
     <div class="prim-item" id="pi-look" onclick="setTool('look')">
       <div class="prim-sym" style="background:rgba(138,151,180,.1)"><span style="color:var(--gray)">◙</span></div>
-      <div><div class="prim-name">Look</div><div class="prim-desc">Collapse to a definite answer</div><div class="prim-req" style="color:var(--gray)">Terminal — cannot undo</div></div>
+      <div><div class="prim-name">Measure</div><div class="prim-desc">Collapse to a definite answer</div><div class="prim-req" style="color:var(--gray)">Terminal — cannot undo</div></div>
     </div>
   </div>
-  <div class="rp-section" style="padding-bottom:4px">
+  <div class="rp-section classic-only" style="padding-bottom:4px">
     <div class="rp-head">System log</div>
   </div>
-  <div id="state-log"><div class="log-entry" style="opacity:.4">— canvas empty —</div></div>
+  <div id="state-log" class="classic-only"><div class="log-entry" style="opacity:.4">— canvas empty —</div></div>
 </div>
 
 <div class="statusbar">
@@ -129,6 +144,10 @@
 <!-- Pseudocode / Qiskit overlay panel -->
 <div id="pc-overlay" onclick="pcOverlayClick(event)"><div id="pc-panel"></div></div>
 
+<!-- How is this implemented? / Problem bank overlays -->
+<div id="how-overlay" class="wide-overlay" onclick="if(event.target===this)QCConcepts.closeHow()"></div>
+<div id="prob-overlay" class="wide-overlay" onclick="if(event.target===this)QCProblems.closeList()"></div>
+
 <!-- Execute overlay panel -->
 <div id="exec-overlay" onclick="execOverlayClick(event)"><div id="exec-panel"></div></div>
 
@@ -141,6 +160,9 @@
 <script src="js/qiskit-panel.js"></script>
 <script src="js/execute.js"></script>
 <script src="js/user-logger.js"></script>
+<script src="js/concepts-catalog.js"></script>
+<script src="js/concepts.js"></script>
+<script src="js/problems.js"></script>
 
 </body>
 </html>

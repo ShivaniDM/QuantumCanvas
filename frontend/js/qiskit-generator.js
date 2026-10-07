@@ -149,7 +149,7 @@ function generateQiskit(ir, doc) {
         const ctrlIdx = labelToIdx[ctrlLbl];
         const tgtIdx  = labelToIdx[tgtLbl];
         if(ctrlIdx === undefined || tgtIdx === undefined) break;
-        emit(`# LINK ${ctrlLbl} → ${tgtLbl} — CNOT: entangle pair`);
+        emit(`# ENTANGLE ${ctrlLbl} → ${tgtLbl} — CNOT: entangle pair`);
         emit(`qc.cx(${ctrlIdx}, ${tgtIdx})`,
              `control=${ctrlLbl}(q${ctrlIdx}), target=${tgtLbl}(q${tgtIdx}) → Bell pair |Φ+⟩`);
         blank();
@@ -158,7 +158,7 @@ function generateQiskit(ir, doc) {
 
       case 'LOOK': {
         const tag = step.code.includes('correlated') ? ' (correlated)' : '';
-        emit(`# LOOK ${step.targets.join(', ')}${tag} — measure into classical bits`);
+        emit(`# MEASURE ${step.targets.join(', ')}${tag} — measure into classical bits`);
         step.targets.forEach(lbl => {
           const idx = labelToIdx[lbl];
           if(idx === undefined) return;

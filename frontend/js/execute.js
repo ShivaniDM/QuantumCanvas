@@ -10,6 +10,12 @@ const BACKEND_URL =
     ? 'http://localhost:8000'
     : 'https://quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
 
+// A 4xx from the concept compiler carries a plain-language reason in {"detail": "..."}; show just that.
+function _backendDetail(status, text) {
+  try { const d = JSON.parse(text).detail; if (typeof d === 'string' && status < 500) return d; } catch (_) {}
+  return `Backend ${status}: ${text}`;
+}
+
 // ── Panel state ───────────────────────────────────────────────────────
 const execState = {
   shots:            1000,
@@ -24,6 +30,8 @@ const execState = {
 
 // ── Open / close ──────────────────────────────────────────────────────
 function openExecutePanel() {
+  if (window.QCConcepts && QCConcepts.active()) { QCConcepts.openExecute(); return; }
+  const _ep = document.getElementById('exec-panel'); if (_ep) _ep._concept = null;
   const ir = extractCanvasIR(state);
   validateIR(ir);
   if(!ir.validation.ok) { toast('Fix validation errors before executing', 'error'); return; }
@@ -139,7 +147,7 @@ function _renderExecPanel(ir, doc, qiskit) {
   // panel session (lastSavedIrJson persists across opens/closes) —
   // comparing the raw ir_json string is enough to know "unchanged since
   // last save", no need to recompute anything server-side just to check.
-  if (execState.lastSavedIrJson === JSON.stringify(ir)) {
+  if (execState.lastSavedIrJson === (panel._concept ? JSON.stringify(panel._concept) : JSON.stringify(ir))) {
     _setSaveStatus(`✓ already saved — logs/runs/${execState.lastSavedInfo?.run_id}/`, 'ok');
   }
 }
@@ -189,11 +197,13 @@ function _buildPayload(backend) {
     canvas_json:    JSON.stringify({ qubits: state.qubits.map(q=>({
                       id:q.id, label:q.label, state:q.state, ops:q.ops, result:q.result
                     })), edges: state.edges }),
-    ir_json:        JSON.stringify(ir),
+    ir_json:        panel._concept ? JSON.stringify(panel._concept) : JSON.stringify(ir),
     pseudocode_txt: _buildPseudocodeText(doc),
     qiskit_py:      qiskitCode,
     backend,
     shots,
+    // Concept circuits are compiled on the server from this document (no exec() of the text above)
+    ...(panel._concept ? { concept_ir: panel._concept } : {}),
   };
 }
 
@@ -283,7 +293,7 @@ async function execRunSimulator(backend) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if(!resp.ok) throw new Error(`Backend ${resp.status}: ${await resp.text()}`);
+    if(!resp.ok) throw new Error(_backendDetail(resp.status, await resp.text()));
     const data = await resp.json();
 
     if(data.counts) {
@@ -492,7 +502,7 @@ async function execRunQPU() {
       body: JSON.stringify(payload),
     });
     const text = await resp.text();                    // read once, keep body for errors
-    if(!resp.ok) throw new Error(`Backend ${resp.status}: ${text}`);
+    if(!resp.ok) throw new Error(_backendDetail(resp.status, text));
     const data = JSON.parse(text);
 
     if(data.job_id) {
