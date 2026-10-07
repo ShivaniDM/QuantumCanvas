@@ -47,6 +47,17 @@ quantumcanvas/
 └── README.md
 ```
 
+## Learn mode (`frontend/learn.html`)
+
+A Colab-style sandbox for the Qiskit Fall Fest notebooks: the notebook is shown read-only on the right, a gate-level circuit editor sits in the middle, and the Qiskit code for whatever you build is always one tab away.
+
+- `js/learn-sim.js` — circuit model, in-browser statevector simulator (up to 6 qubits), Qiskit code generator, `qc.*` cell parser
+- `js/learn-notebook.js` — `.ipynb` viewer (markdown, KaTeX math, code cells, **Visualise** / **Copy** buttons)
+- `js/learn.js` — palette, circuit editor, tracker, measurement / maths / code tabs; "Qiskit Aer (server)" reuses the existing `POST /execute` backend
+- `notebooks/<name>.ipynb` + optional `<name>.qc.json` — a sidecar mapping cell indices to circuits for cells that build circuits through library classes (e.g. `HartreeFock`, `UCCSD`) rather than literal `qc.h(0)` lines
+
+Serve `frontend/` over http (e.g. `python -m http.server`) so the notebook can be fetched.
+
 ## Setup
 
 ### 1. Copy and fill `.env`
