@@ -421,6 +421,8 @@ function _renderExplanation(r) {
                   unavailable: 'The AI explanation is unavailable right now (provider limit or outage). This is the verified explanation.',
                   budget: 'Today\'s AI explanation allowance is used up. This is the verified explanation.' }[L.status];
     if (why) h += `<div class="ex-note">${_h(why)}</div>`;
+    const errs = (L.attempts || []).filter(a => a.error).map(a => `${a.provider || ''}: ${a.error}`);
+    if (errs.length) h += `<div class="ex-note err"><b>Why:</b> ${_h(errs.join(' | '))}</div>`;
   }
   if (r.save_error) h += `<div class="ex-note err">${_h(r.save_error)}</div>`;
   return h;

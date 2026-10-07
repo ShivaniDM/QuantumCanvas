@@ -237,11 +237,12 @@ function _renderPC(ir,doc){
       h+=`<div class="pc-step">
         <div class="pc-stripe ${sc}"></div>
         <div class="pc-step-body">
-          <div class="pc-step-num">Step ${step.n} · ${step.op}</div>
+          <div class="pc-step-num">Step ${step.n} · ${step.op}${(step.id&&ir._concept)?`<button class="pc-ask" title="Explain this step, with the maths" onclick="QCMath.ask('${_h(step.id)}', this)">?</button>`:''}</div>
           <div class="pc-step-code">${_h(step.code)}</div>
           <div class="pc-step-plain">${_h(step.plain)}</div>
           <button class="pc-qnote-btn" onclick="pcQnote(this)">[ quantum ▸ ]</button>
           <div class="pc-qnote">${_h(step.qnote)}</div>
+          <div class="pc-ask-box"></div>
         </div>
       </div>`;
     });
@@ -289,4 +290,5 @@ function _renderPC(ir,doc){
   </div>`;
 
   panel.innerHTML=h;
+  if(window.QCMath && ir._concept) QCMath.installTabs(ir._concept);
 }
