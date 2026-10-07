@@ -5,8 +5,8 @@
 
 const QCMath = (() => {
   const h = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const C = { doc: null, math: null, key: null, tab: 'pc' };
-  const labels = () => (typeof state !== 'undefined' ? state.qubits.map(q => q.label) : []);
+  const C = { doc: null, math: null, key: null, tab: 'pc', labels: null };
+  const labels = () => C.labels || (typeof state !== 'undefined' ? state.qubits.map(q => q.label) : []);
   const pct = p => `${(100 * p).toFixed(p > 0 && p < 0.001 ? 2 : p < 0.1 ? 1 : 0).replace(/\.0$/, '')}%`;
   const fix = t => (window.QCConcepts ? QCConcepts.labelize(t) : t);
 
@@ -96,9 +96,9 @@ const QCMath = (() => {
     if (which === 'math') loadMath();
   }
   // Called at the end of every pseudocode render (so the tabs survive going to Qiskit and back).
-  function installTabs(res) {
+  function installTabs(res, labelsOverride) {
     const p = document.getElementById('pc-panel'); if (!p) return;
-    C.doc = res?.ok ? res.document : null; C.tab = 'pc';
+    C.doc = res?.ok ? res.document : null; C.tab = 'pc'; C.labels = labelsOverride || null;
     const head = p.querySelector('.pc-header'); if (!head) return;
     head.insertAdjacentHTML('afterend', `<div class="pc-tabs"><button class="on" data-t="pc" onclick="QCMath.tab('pc')">Pseudocode</button>
       <button data-t="math" onclick="QCMath.tab('math')" ${C.doc ? '' : 'disabled title="Fix the errors first"'}>∑ Math</button></div>`);
@@ -142,6 +142,39 @@ const QCMath = (() => {
     }
     return out;
   }
-  return { tab, installTabs, ask, loadMath };
+  // ── Classic mode ────────────────────────────────────────────────────
+  // The classic canvas is converted to the same Concept IR by the backend (the very conversion used when it runs),
+  // so the Math tab and "?" show exactly what will execute. Classic pseudocode steps are matched to the converted
+  // steps in order; a step that cannot be matched with certainty (several Boost clicks merged into one line) gets no "?".
+  const OPMAP = { SHAKE: 'shake', MARK: 'mark', BOOST: 'boost', LINK: 'entangle', LOOK: 'measure' };
+  function mapSteps(steps, nodes) {
+    const out = []; let j = 0, lastLook = null;
+    for (const s of steps) {
+      if (s.op === 'INITIALIZE') { out.push(null); continue; }
+      const want = OPMAP[s.op];
+      if (s.op === 'LOOK' && lastLook !== null && nodes[lastLook]?.op === 'measure') { out.push(nodes[lastLook].id); continue; }   // correlated collapse: same measure node
+      if (!nodes[j] || nodes[j].op !== want) { out.push(null); lastLook = null; continue; }
+      if (want === 'boost') {
+        let k = j; while (nodes[k + 1] && nodes[k + 1].op === 'boost') k++;
+        out.push(k === j ? nodes[j].id : null); j = k + 1; lastLook = null;
+      } else { out.push(nodes[j].id); lastLook = s.op === 'LOOK' ? j : null; j++; }
+    }
+    return out;
+  }
+  async function installClassic(ir) {
+    const p = document.getElementById('pc-panel'); if (!p) return;
+    let res;
+    try { res = await post('/compile', { legacy_ir: JSON.parse(JSON.stringify(ir)), nodes: [], classical_bits: 0 }); } catch (e) { return; }
+    if (!res || !res.ok || !document.getElementById('pc-panel') || p.querySelector('.pc-tabs')) return;
+    installTabs(res, (ir.qubits || []).map(q => q.label));
+    const ids = mapSteps(window._pcLastDocSteps || [], res.document.operations);
+    p.querySelectorAll('.pc-steps .pc-step').forEach((el, i) => {
+      const id = ids[i]; if (!id) return;
+      el.querySelector('.pc-step-num')?.insertAdjacentHTML('beforeend', `<button class="pc-ask" title="Explain this step, with the maths" onclick="QCMath.ask('${h(id)}', this)">?</button>`);
+      el.querySelector('.pc-step-body')?.insertAdjacentHTML('beforeend', '<div class="pc-ask-box"></div>');
+    });
+  }
+
+  return { tab, installTabs, installClassic, ask, loadMath };
 })();
 window.QCMath = QCMath;

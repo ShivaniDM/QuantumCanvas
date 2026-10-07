@@ -290,5 +290,6 @@ function _renderPC(ir,doc){
   </div>`;
 
   panel.innerHTML=h;
-  if(window.QCMath && ir._concept) QCMath.installTabs(ir._concept);
+  window._pcLastDocSteps = doc ? doc.steps : [];
+  if(window.QCMath){ if(ir._concept) QCMath.installTabs(ir._concept); else if(doc) QCMath.installClassic(ir); }
 }
