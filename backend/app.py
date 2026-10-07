@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any
+import json
 import uvicorn
 
 from config      import settings
@@ -26,18 +27,47 @@ from logger      import ArtifactLogger, compute_circuit_hash
 from ionq_runner import IonQRunner, JobStatus
 from concepts    import compile_document
 from concepts.migrate import merge_canvas
+from ratelimit   import RateLimitMiddleware
 import problems as problem_bank
 import executor
 from runlog import log_event
 
 app = FastAPI(title="QuantumCanvas API", version="1.0.0")
 
+_cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # tighten for production
-    allow_methods=["POST","GET"],
+    allow_origins=_cors_origins,     # set CORS_ORIGINS to your real frontend origin(s) in production
+    allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
+app.add_middleware(RateLimitMiddleware)
+
+
+def _check_circuit_size(n_qubits: int | None, shots: int | None = None):
+    """Hard ceiling before anything touches the simulator — Aer needs 2**n amplitudes in memory."""
+    if n_qubits is not None and n_qubits > settings.MAX_QUBITS:
+        raise HTTPException(status_code=400,
+                            detail=f"This circuit has {n_qubits} qubits; the server limit is {settings.MAX_QUBITS}.")
+    if shots is not None and shots > settings.MAX_SHOTS:
+        raise HTTPException(status_code=400,
+                            detail=f"{shots} shots exceeds the server limit of {settings.MAX_SHOTS}.")
+
+
+def _n_qubits_of(concept_ir: dict | None, ir_json) -> int | None:
+    """Best-effort qubit count from either the Concept IR document or the legacy canvas IR, whichever is present."""
+    if isinstance(concept_ir, dict) and isinstance(concept_ir.get("qubits"), int):
+        return concept_ir["qubits"]
+    try:
+        obj = json.loads(ir_json) if isinstance(ir_json, str) else ir_json
+    except Exception:
+        return None
+    if isinstance(obj, dict):
+        if isinstance(obj.get("qubits"), int):
+            return obj["qubits"]
+        if isinstance(obj.get("qubits"), list):
+            return len(obj["qubits"])
+    return None
 
 # ── Request / response models ─────────────────────────────────────────
 
@@ -162,9 +192,19 @@ async def log_circuit(req: LogCircuitRequest):
     )
 
 
+def _check_qpu_allowed(backend: str):
+    """Real hardware costs real money. The frontend's "confirm the cost" dialog is a UI nicety,
+    not a security boundary — this is the actual gate, off by default. See config.py's ALLOW_QPU_SUBMIT."""
+    if backend == "qpu" and str(settings.ALLOW_QPU_SUBMIT).lower() != "on":
+        raise HTTPException(status_code=403,
+                            detail="Submitting to real quantum hardware is disabled on this server.")
+
+
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest):
     """Validate → compile → execute → math-check → save ONE run record (plan 9c). See executor.py."""
+    _check_qpu_allowed(req.backend)
+    _check_circuit_size(_n_qubits_of(req.concept_ir, req.ir_json), req.shots)
     return ExecuteResponse(**executor.execute(req.model_dump()))
 
 
@@ -221,6 +261,7 @@ async def estimate_cost(req: ExecuteRequest):
     Dry-run the circuit on IonQ to get cost + gate count estimate.
     Uses IonQ's dry_run mode — no QPU time consumed.
     """
+    _check_circuit_size(_n_qubits_of(req.concept_ir, req.ir_json), req.shots)
     circuit_hash = compute_circuit_hash(req.ir_json)
     logger = ArtifactLogger()
     run_id, _ = logger.open_run(circuit_hash)
@@ -261,8 +302,11 @@ async def export_qasm(req: QasmRequest):
     try:
         from qasm_export import export_qasm2
         return QasmResponse(qasm=export_qasm2(req.qiskit_py))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except RuntimeError as e:                 # expected, describes the caller's own circuit — safe to show
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:                    # anything else is unexpected — log it, don't echo internals
+        log_event("qasm_export_failed", level="error", message=str(e)[:500])
+        raise HTTPException(status_code=500, detail="QASM export failed unexpectedly.")
 
 
 @app.post("/compile")
@@ -273,6 +317,7 @@ async def compile_concepts(req: CompileRequest):
         raw = req.document
     else:
         raw = merge_canvas(req.legacy_ir, req.nodes, req.classical_bits)
+    _check_circuit_size(raw.get("qubits") if isinstance(raw, dict) else None)
     res = compile_document(raw, backend=req.backend, with_qasm=req.qasm)
     out = res.to_dict()
     out["document"] = out["document"] or raw
@@ -400,10 +445,17 @@ async def explain_one_step(req: ExplainStepRequest):
     return res
 
 
+def _checked_run_id(run_id: str) -> str:
+    from runlog.store import is_valid_run_id
+    if not is_valid_run_id(run_id):
+        raise HTTPException(status_code=400, detail="run_id must be exactly 12 lowercase hex characters")
+    return run_id
+
+
 @app.get("/runs/{run_id}")
 async def get_run_record(run_id: str, revision: int | None = None):
     """The stored run record (latest revision unless one is asked for). Secrets were redacted before it was written."""
-    rec = executor.store().load(run_id, revision)
+    rec = executor.store().load(_checked_run_id(run_id), revision)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"No run record {run_id}")
     return rec
@@ -413,7 +465,7 @@ async def get_run_record(run_id: str, revision: int | None = None):
 async def replay_run(run_id: str):
     """Audit: recompile the stored IR and compare with what was recorded."""
     from runlog.replay import replay
-    rec = executor.store().load(run_id)
+    rec = executor.store().load(_checked_run_id(run_id))
     if rec is None:
         raise HTTPException(status_code=404, detail=f"No run record {run_id}")
     return replay(rec)

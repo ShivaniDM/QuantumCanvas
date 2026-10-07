@@ -152,11 +152,11 @@ def execute(req: dict) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        rec.error("submit", type(e).__name__, str(e), exc=e)
+        rec.error("submit", type(e).__name__, str(e), exc=e)      # full detail kept server-side (run record + log)
         logger.error(str(e))
         rec.finish("error")
         save_record(rec, response)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"The run failed unexpectedly (record {rec.run_id}).")
     return response
 
 
@@ -168,17 +168,17 @@ def _fail(rec, response, logger, message, code):
 
 
 def _run_aer(rec, req, concept, logger):
-    from aer_runner import run_aer_detailed, _strip_run_block
+    from aer_runner import run_aer_detailed
+    from safe_qiskit import UnsafeSource, build_circuit_from_source
     with rec.stage("submit"):
         if concept:
             from concepts.emit_qiskit import build_circuit
             qc = build_circuit(concept.lowered)
-        else:                                            # classic path: the generated text, as before
-            ns: dict = {}
-            exec(compile(_strip_run_block(req["qiskit_py"]), "<quantumcanvas_qiskit>", "exec"), ns)  # noqa: S102
-            qc = ns.get("qc")
-            if qc is None:
-                raise RuntimeError("Generated code did not define a circuit `qc`.")
+        else:                                            # classic path: parsed, never executed (see safe_qiskit.py)
+            try:
+                qc = build_circuit_from_source(req["qiskit_py"])
+            except UnsafeSource as e:
+                raise RuntimeError(f"Generated code could not be built safely: {e}") from e
         d = run_aer_detailed(qc, rec.execution["shots"], logger=logger)
     ex = rec.execution
     ex.update(backend_executed=d["backend_name"], seed=d["seed"], transpiled=d["transpiled"],

@@ -8,6 +8,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from concepts import compile_document          # noqa: E402
 from concepts.emit_qiskit import build_circuit  # noqa: E402
+from config import settings                     # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit():
+    """The in-memory per-IP rate limit (ratelimit.py) is a production safety net against one
+    client exhausting a single server instance — tests intentionally fire many requests in a
+    row through the same TestClient, so it's disabled here rather than tripped by test speed."""
+    before = settings.RATE_LIMIT_PER_MINUTE
+    settings.RATE_LIMIT_PER_MINUTE = 0
+    yield
+    settings.RATE_LIMIT_PER_MINUTE = before
 
 
 def make_doc(n, ops, c=0):

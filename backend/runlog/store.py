@@ -8,11 +8,22 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import jsonschema
 
 from .redact import redact
+
+# run_id is always uuid4().hex[:12] (see record.new_run_id) — exactly 12 lowercase hex chars.
+# find() below builds a glob from it, so anything else (notably "*", "?", "[") must be refused
+# before it reaches the filesystem: an unvalidated run_id let one caller match and read ANY
+# other run's record (confirmed during a security review — this is the fix).
+_RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
+def is_valid_run_id(run_id: str) -> bool:
+    return bool(isinstance(run_id, str) and _RUN_ID_RE.match(run_id))
 from .schema import RUN_RECORD_V2
 from .serverlog import log_event
 
@@ -99,6 +110,8 @@ class RunStore:
 
     # ── reading ───────────────────────────────────────────────────────
     def find(self, run_id: str) -> list[Path]:
+        if not is_valid_run_id(run_id):            # never let an unvalidated run_id reach a glob pattern
+            return []
         return sorted((self.base / "runs").glob(f"*/runrecord_{run_id}.v*.json"),
                       key=lambda p: int(p.stem.rsplit(".v", 1)[1]))
 

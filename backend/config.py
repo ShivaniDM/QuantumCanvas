@@ -10,11 +10,32 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # IonQ credentials — loaded from .env, never committed to git
-    IONQ_API_KEY:  str = "${{ IONQ_API_KEY }}"
+    IONQ_API_KEY:  str = ""
     IONQ_ENDPOINT: str = "https://api.ionq.co"
 
     # Logging
     LOG_DIR: str = "../logs"
+
+    # ── Security knobs (2026 security review) ──────────────────────────────
+    # Comma-separated list of frontend origins allowed to call this API. "*" (the old
+    # default) lets ANY website drive a visitor's browser into this API, including the
+    # paid IonQ/QPU routes below — set this to your real frontend origin(s) in production.
+    CORS_ORIGINS: str = "*"
+
+    # Real quantum hardware costs real money per job. Submitting to it is OFF by default;
+    # the frontend's "confirm the cost" dialog is a UI nicety, not a security boundary, so
+    # this is the actual gate. Set to "on" only once you also have auth/quota in front of it.
+    ALLOW_QPU_SUBMIT: str = "off"
+
+    # Hard ceiling on circuit size / shots for /execute and /compile. Aer needs 2**qubits
+    # amplitudes in memory — uncapped, one request can exhaust the server for everyone.
+    MAX_QUBITS: int = 24
+    MAX_SHOTS: int = 100_000
+
+    # Simple in-memory per-IP rate limit for the expensive routes (/execute, /cost, /compile).
+    # Not shared across multiple server instances — fine for a single App Service instance;
+    # swap for a Redis-backed limiter if you scale out.
+    RATE_LIMIT_PER_MINUTE: int = 30
 
     # Explanation layer (plan 9b). Provider-neutral and OpenAI-compatible: switching provider = changing these values,
     # not code. Unset => the explanation layer runs template-only. Keys live server-side ONLY.
