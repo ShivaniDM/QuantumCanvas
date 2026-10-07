@@ -19,6 +19,16 @@ from runlog.replay import canvas_to_ir, replay  # noqa: E402
 from runlog.store import validate_record  # noqa: E402
 
 client = TestClient(backend_app.app)
+
+
+@pytest.fixture(autouse=True)
+def _allow_qpu_submit():
+    """This file deliberately exercises backend=qpu (with IonQRunner faked out) to test the
+    backend-mismatch flagging logic — opt into the (off-by-default) QPU gate for its duration."""
+    before = settings.ALLOW_QPU_SUBMIT
+    settings.ALLOW_QPU_SUBMIT = "on"
+    yield
+    settings.ALLOW_QPU_SUBMIT = before
 FIX = Path(__file__).parent / "fixtures"
 REVIEWED = json.loads((FIX / "runs" / "f9e60a7115d2.json").read_text(encoding="utf-8"))
 
@@ -117,7 +127,9 @@ def test_replay_endpoint():
     out = client.post(f"/runs/{rid}/replay").json()
     assert out["qiskit_identical"] and out["distribution_identical"] and out["counts_reproduced"] and out["roundtrip_identical"]
     assert client.get(f"/runs/{rid}").json()["run_id"] == rid
-    assert client.get("/runs/doesnotexist").status_code == 404
+    assert client.get("/runs/000000000000").status_code == 404           # valid shape, not found
+    assert client.get("/runs/doesnotexist").status_code == 400           # not a valid run_id shape
+    assert client.get("/runs/*").status_code == 400                      # glob metacharacters are rejected, not matched
 
 
 def test_canvas_to_ir_round_trip_equals_stored_ir():

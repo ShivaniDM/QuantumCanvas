@@ -4,30 +4,19 @@ Converts a QuantumCanvas-generated Qiskit program into OpenQASM 2.0 text, for
 handoff to tools like IBM Quantum Composer (paste into its code editor to get
 a visual, editable circuit) independent of any direct integration.
 
-Reuses the same "build qc without running the simulator tail" approach as
-aer_runner.py, since exporting QASM only needs the constructed circuit, not
-an execution.
+Builds the circuit via safe_qiskit's AST-only parser (never exec()) — see that
+module for the security reasoning.
 """
 
 import qiskit.qasm2 as qasm2
 
-# The generator emits this marker right before its own run/print block.
-_RUN_MARKER = "# ── Run on Aer simulator"
-
-
-def _strip_run_block(qiskit_code: str) -> str:
-    idx = qiskit_code.find(_RUN_MARKER)
-    return qiskit_code[:idx] if idx != -1 else qiskit_code
+from safe_qiskit import UnsafeSource, build_circuit_from_source
 
 
 def export_qasm2(qiskit_code: str) -> str:
     """Build the circuit from generated Qiskit source and return OpenQASM 2.0 text."""
-    build_src = _strip_run_block(qiskit_code)
-    ns: dict = {}
-    exec(compile(build_src, "<quantumcanvas_qiskit>", "exec"), ns)  # noqa: S102
-
-    qc = ns.get("qc")
-    if qc is None:
-        raise RuntimeError("Generated code did not define a circuit `qc`.")
-
+    try:
+        qc = build_circuit_from_source(qiskit_code)
+    except UnsafeSource as e:
+        raise RuntimeError(f"Generated code could not be built safely: {e}") from e
     return qasm2.dumps(qc)
