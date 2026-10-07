@@ -342,7 +342,7 @@ async def explain_run(req: ExplainRequest):
             save_error = f"The explanation could not be added to the run record: {e}"
             log_event("record_save_failed", level="error", run_id=req.record_id, stage="save", message=str(e))
     llm_pub = {k: v for k, v in (result["llm"] or {}).items() if k not in ("prompt", "response", "attempts")}
-    llm_pub["attempts"] = [{"provider": a.get("provider"), "kind": a.get("kind"), "ok": a.get("ok")} for a in (result["llm"] or {}).get("attempts", [])]
+    llm_pub["attempts"] = [{"provider": a.get("provider"), "kind": a.get("kind"), "ok": a.get("ok"), "error": (a.get("error") or "")[:300] or None} for a in (result["llm"] or {}).get("attempts", [])]
     return {"template": result["template"], "llm": llm_pub, "save_error": save_error}
 
 
