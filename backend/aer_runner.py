@@ -56,18 +56,42 @@ def run_aer(qiskit_code: str, shots: int, logger=None) -> dict:
     if qc is None:
         raise RuntimeError("Generated code did not define a circuit `qc`.")
 
+    return _simulate(qc, shots, logger)
+
+
+def run_aer_circuit(qc, shots: int, logger=None, seed: int | None = None) -> dict:
+    """Run an already-built Qiskit circuit (the concept compiler's output) on Aer.
+
+    No exec() here: the circuit is built from the compiled gate list, not from source text.
+    """
+    try:
+        from qiskit_aer import AerSimulator  # noqa: F401
+    except Exception as e:
+        raise AerNotInstalled(f"qiskit-aer failed to import ({type(e).__name__}: {e}).") from e
+    return _simulate(qc, shots, logger, seed)
+
+
+def _simulate(qc, shots: int, logger=None, seed: int | None = None) -> dict:
+    from qiskit import QuantumCircuit, transpile
+    from qiskit_aer import AerSimulator
+
     # Aer needs measurements to produce counts. If none were emitted
     # (e.g. no LOOK applied), measure the whole register into a fresh circuit.
     if not _has_measure(qc):
         nq = qc.num_qubits
-        measured = QuantumCircuit(nq, nq)
-        measured.compose(qc, qubits=range(nq), inplace=True)
-        measured.measure(range(nq), range(nq))
+        if qc.num_clbits <= nq:
+            measured = QuantumCircuit(nq, nq)
+            measured.compose(qc, qubits=range(nq), clbits=range(qc.num_clbits), inplace=True)
+            measured.measure(range(nq), range(nq))
+        else:                       # more classical bits than qubits: add a separate register
+            measured = qc.copy()
+            measured.measure_all()
         qc = measured
 
     sim = AerSimulator()
     compiled = transpile(qc, sim)
-    result = sim.run(compiled, shots=shots).result()
+    kw = {} if seed is None else {"seed_simulator": seed}
+    result = sim.run(compiled, shots=shots, **kw).result()
     counts = result.get_counts()
 
     # Normalise keys: Qiskit separates classical registers with spaces.

@@ -58,6 +58,18 @@ A Colab-style sandbox for the Qiskit Fall Fest notebooks: the notebook is shown 
 
 Serve `frontend/` over http (e.g. `python -m http.server`) so the notebook can be fetched.
 
+## Concepts mode (main canvas)
+
+The top bar has a **Classic | Concepts** switch. Classic is the original five primitives (Shake, Mark, Boost, Entangle, Measure). Concepts adds a palette grouped by family — Prepare (Set, Flip, Encode, Reset), Superposition (Shake, Rotate, Phase), Connect (Entangle, Swap, Control), Search (Compare, Mark, Boost, Uncompute), Numbers (Fourier, Add), Classical (Measure, Correct) — and a **Steps** panel. Pick a concept, click the qubits it acts on, fill in its values, press *Add step*. ⓘ on a step shows *How is this implemented?*: concept → gates → Qiskit lines → IonQ gates, highlighted from the trace map. **🧩 Problems** opens 14 practice problems with automatic checking.
+
+* `backend/concepts/` — compiler: Concept IR v0.3 → validate → expand → logical gates → Qiskit / OpenQASM 3 / IonQ
+* `backend/problems/` — problem bank (`problems.json`) and checker
+* `backend/tests/` — pytest suite (`python -m pytest tests -q` from `backend/`)
+* `frontend/js/concepts-catalog.js`, `concepts.js`, `problems.js`, `css/concepts.css` — UI
+* `docs/CONCEPTS_PLAN.md` (design) and `docs/CONCEPTS_STATUS.md` (what was built, decisions, known limits)
+
+Concepts mode needs the backend running (`POST /compile`).
+
 ## Setup
 
 ### 1. Copy and fill `.env`

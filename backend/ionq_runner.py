@@ -93,6 +93,20 @@ def qiskit_source_to_ionq_circuit(qiskit_code: str, n_qubits: int) -> dict:
             gates.extend(_toffoli(a, b, c))
             continue
 
+        # qc.mcx([controls...], target) - emitted by the MARK/BOOST oracle's
+        # H·MCX·H (MCZ) pattern for registers of 4+ qubits. Use IonQ's named
+        # "mcx" QIS gate (auto-decomposed server-side) rather than attaching a
+        # "controls" array to a plain "x" gate - the latter hit a hard
+        # TooManyControls error above 7 controls on a real submitted job;
+        # "mcx" is documented to have no such cap, only qubit/gate-budget
+        # limits, since IonQ's compiler decomposes it itself.
+        m = re.match(r'qc\.mcx\(\[([\d,\s]+)\],\s*(\d+)\)', line)
+        if m:
+            controls = [int(x) for x in m.group(1).split(',') if x.strip()]
+            target = int(m.group(2))
+            gates.append({"gate": "mcx", "target": target, "controls": controls})
+            continue
+
         # measure calls are implicit on IonQ (all qubits measured at end) - skip
 
     return {"gateset": "qis", "qubits": n_qubits, "circuit": gates}
@@ -146,6 +160,12 @@ class IonQRunner:
         m = re.search(r'QuantumCircuit\((\d+)', qiskit_code)
         return int(m.group(1)) if m else 2
 
+    def _circuit_for(self, qiskit_code: str, ionq_circuit: dict | None) -> dict:
+        """A pre-lowered IonQ circuit (from the concept compiler) wins; otherwise parse the Qiskit text."""
+        if ionq_circuit is not None:
+            return ionq_circuit
+        return qiskit_source_to_ionq_circuit(qiskit_code, self._n_qubits(qiskit_code))
+
     def _submit_job(self, ionq_input: dict, shots: int, backend: str,
                     name: str, dry_run: bool = False) -> str:
         """
@@ -181,10 +201,9 @@ class IonQRunner:
         self.logger.log(f"IonQ submitted job_id={data.get('id')} status={data.get('status')}")
         return data["id"]
 
-    def run_simulator(self, qiskit_code: str, shots: int) -> dict:
+    def run_simulator(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None) -> dict:
         """Submit to the IonQ cloud simulator, poll until completed, return counts."""
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
         job_id  = self._submit_job(circuit, shots, "simulator", "qc-simulator")
 
         for attempt in range(90):          # up to ~180s
@@ -197,11 +216,10 @@ class IonQRunner:
                 return status.counts or {}
         raise TimeoutError(f"Simulator job {job_id} did not complete in time")
 
-    def submit_ionq_sim(self, qiskit_code: str, shots: int) -> str:
+    def submit_ionq_sim(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None) -> str:
         """Submit to the IonQ cloud *simulator* (async). Returns job_id for polling.
         Named explicitly so it is never confused with submit_qpu()."""
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
         return self._submit_job(circuit, shots, "simulator", "qc-ionq-sim")
 
     def submit_hardware(self, qiskit_code: str, shots: int) -> str:
@@ -209,19 +227,17 @@ class IonQRunner:
         'submit_hardware' (it targets the simulator, NOT the QPU)."""
         return self.submit_ionq_sim(qiskit_code, shots)
 
-    def submit_qpu(self, qiskit_code: str, shots: int) -> str:
+    def submit_qpu(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None) -> str:
         """Submit to real QPU hardware (qpu.forte-1). User must have confirmed cost."""
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
         return self._submit_job(circuit, shots, "qpu.forte-1", "qc-qpu")
 
-    def estimate_cost(self, qiskit_code: str, shots: int) -> dict:
+    def estimate_cost(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None) -> dict:
         """
         Dry-run on qpu.forte-1 to get a cost estimate without executing.
         v0.4: submit dry_run, poll to completed, then GET /cost for the USD value.
         """
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
         job_id  = self._submit_job(circuit, shots, "qpu.forte-1", "qc-cost-estimate", dry_run=True)
 
         data = {}
