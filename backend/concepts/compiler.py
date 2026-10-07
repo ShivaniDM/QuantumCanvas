@@ -25,6 +25,7 @@ class CompileResult:
     line_gates: list = field(default_factory=list)
     qiskit_py: str = ""
     qasm3: str | None = None
+    step_log: dict | None = None
     pseudocode: dict | None = None
     ionq: dict | None = None
     ionq_src: list = field(default_factory=list)
@@ -42,10 +43,45 @@ class CompileResult:
             "line_gates": self.line_gates,
             "qiskit_py": self.qiskit_py,
             "qasm3": self.qasm3,
+            "step_log": self.step_log,
             "pseudocode": self.pseudocode,
             "ionq": self.ionq,
             "ionq_src": self.ionq_src,
         }
+
+
+COMPILE_MAX_QUBITS = 12          # the live /compile path stays snappy; post-run analysis uses the full limit
+COMPILE_MAX_COUNTERFACTUAL_STEPS = 24
+
+
+def _apply_math_log(res, doc, index_of):
+    """Render the pseudocode's per-step facts from the math layer's step log (never from templates alone)."""
+    try:
+        from mathlayer import analyze_document
+        from explain.template import UNMEASURED_WARNING, idle_steps, render_step
+        ir = res.document
+        log = analyze_document(ir, max_qubits=COMPILE_MAX_QUBITS, code_check=False,
+                               counterfactual=len(ir["operations"]) <= COMPILE_MAX_COUNTERFACTUAL_STEPS)
+    except Exception:                                  # the math layer must never break compilation
+        return
+    res.step_log = log
+    by_id = {n["id"]: n for n in ir["operations"]}
+    steps = {s["id"]: s for s in log.get("steps", [])}
+    for st in res.pseudocode["steps"]:
+        sid = st.get("id")
+        if sid not in steps:
+            continue
+        r = render_step(steps[sid], by_id[sid])
+        if r["plain"]:
+            st["plain"] = r["plain"]
+        if r["effect"]:
+            st["effect"] = r["effect"]
+            st["plain"] = (st["plain"] + " Result: " + r["effect"]).strip()
+        if r["claim_ok"] is not None:
+            st["claim_ok"] = r["claim_ok"]
+    for oid in idle_steps(log):
+        res.warnings.append(Issue("W_UNMEASURED_EFFECT", "warning", UNMEASURED_WARNING, oid,
+                                  "Measure the qubits this step works on, or remove the step."))
 
 
 def compile_document(raw: dict, *, backend: str | None = None, with_qasm: bool = False) -> CompileResult:
@@ -66,7 +102,9 @@ def compile_document(raw: dict, *, backend: str | None = None, with_qasm: bool =
 
     low = lower_document(doc)
     index_of = {n.id: i + 1 for i, n in enumerate(doc.operations)}
-    labels = {n.id: describe(n, index_of)[0] for n in doc.operations}
+    # Code comments name the action only. The "→ what it does" clause is a template claim, and a comment in
+    # copy-pasted code must never assert something the circuit may not do (see concepts/analysis.py).
+    labels = {n.id: describe(n, index_of)[0].split("  →")[0] for n in doc.operations}
     lines, line_gates = to_code(low, labels)
     res.lowered = low
     res.gates = [g.to_dict() for g in low.gates]
@@ -75,6 +113,7 @@ def compile_document(raw: dict, *, backend: str | None = None, with_qasm: bool =
     res.qiskit_lines, res.line_gates = lines, line_gates
     res.qiskit_py = "\n".join(lines)
     res.pseudocode = build_pseudocode(doc)
+    _apply_math_log(res, doc, index_of)
     if with_qasm:
         res.qasm3 = to_qasm3(low)
     if backend == "ionq":

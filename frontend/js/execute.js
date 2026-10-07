@@ -16,6 +16,14 @@ function _backendDetail(status, text) {
   return `Backend ${status}: ${text}`;
 }
 
+// One id per browser tab, sent with every run so records from the same sitting can be grouped (no personal data).
+const QC_SESSION_ID = (() => {
+  try { const k = sessionStorage.getItem('qc_session'); if (k) return k; } catch (_) {}
+  const id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 's' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try { sessionStorage.setItem('qc_session', id); } catch (_) {}
+  return id;
+})();
+
 // ── Panel state ───────────────────────────────────────────────────────
 const execState = {
   shots:            1000,
@@ -132,6 +140,8 @@ function _renderExecPanel(ir, doc, qiskit) {
     <p class="exec-log-line">Ready — choose a backend to execute.</p>
   </div>
 
+  <div id="exec-explain" class="exec-explain" style="display:none"></div>
+
   <div class="exec-footer">
     <button class="exec-run-sim-btn" id="exec-run-aer"
             onclick="execRunSimulator('aer')">⚡ Aer Simulator</button>
@@ -139,6 +149,8 @@ function _renderExecPanel(ir, doc, qiskit) {
             onclick="execRunSimulator('ionq')">⚡ IonQ Simulator</button>
     <button class="exec-run-hw-btn" id="exec-run-hw"
             onclick="execRunHardware()">🖥 IonQ Hardware</button>
+    <button class="exec-run-sim-btn" id="exec-explain-btn" onclick="execExplain()" disabled
+            title="Run something first, then ask for an explanation checked against the simulation">💬 Explain</button>
     <button class="exec-cancel-btn" onclick="closeExecutePanel()">Close</button>
     <span class="exec-save-note">Artifacts saved to logs/runs/</span>
   </div>`;
@@ -162,6 +174,7 @@ function _recordLastRun(counts, runId, kind, raw) {
     const payload = _buildPayload(backend);
     execState.lastRun = {
       schema:         'quantumcanvas.run/v1',
+      record_id:      execState.lastRecordId || null,   // the server-side v2 record (full audit trail)
       run_id:         runId || null,
       title:          panel?._doc?.title || 'Untitled circuit',
       backend:        payload.backend,
@@ -196,12 +209,15 @@ function _buildPayload(backend) {
   return {
     canvas_json:    JSON.stringify({ qubits: state.qubits.map(q=>({
                       id:q.id, label:q.label, state:q.state, ops:q.ops, result:q.result
-                    })), edges: state.edges }),
+                    })), edges: state.edges,
+                    // concept steps, so the run can be reopened (File → Open run in Concepts mode)
+                    ...(panel._concept && window.QCConcepts ? { concepts: QCConcepts.snapshot() } : {}) }),
     ir_json:        panel._concept ? JSON.stringify(panel._concept) : JSON.stringify(ir),
     pseudocode_txt: _buildPseudocodeText(doc),
     qiskit_py:      qiskitCode,
     backend,
     shots,
+    session_id: QC_SESSION_ID,
     // Concept circuits are compiled on the server from this document (no exec() of the text above)
     ...(panel._concept ? { concept_ir: panel._concept } : {}),
   };
@@ -296,6 +312,8 @@ async function execRunSimulator(backend) {
     if(!resp.ok) throw new Error(_backendDetail(resp.status, await resp.text()));
     const data = await resp.json();
 
+    execState.lastRecordId = data.record_id || null;
+    _showRunInfo(data);
     if(data.counts) {
       // Aer returns synchronously
       _setPipeStep(4);
@@ -352,6 +370,7 @@ function _pollSimJob(jobId) {
       // 'submitted' are intermediate - keep polling through them.
       if(data.status === 'completed') {
         clearInterval(execState.polling); execState.polling = null;
+        _showRunInfo(data);
         _setPipeStep(4);
         _onSimResults(data.counts, data.run_id || execState.runId);
       } else if(data.status === 'failed' || data.status === 'canceled' || data.status === 'cancelled') {
@@ -362,6 +381,68 @@ function _pollSimJob(jobId) {
       }
     } catch(e) { execLog(`  Poll error: ${e.message}`, 'warn'); }
   }, 3000);
+}
+
+// ── Explain this run: verified template always; AI text only if it passed the claim checker ──
+async function execExplain() {
+  const id = execState.lastRecordId;
+  const box = document.getElementById('exec-explain');
+  if (!id) { if (typeof toast === 'function') toast('Run the circuit first', 'warn'); return; }
+  box.style.display = 'block';
+  box.innerHTML = '<div class="ex-note">Checking the explanation against the simulation…</div>';
+  const btn = document.getElementById('exec-explain-btn'); if (btn) btn.disabled = true;
+  try {
+    const labels = (typeof state !== 'undefined') ? state.qubits.map(q => q.label) : [];
+    const resp = await fetch(`${BACKEND_URL}/explain`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ record_id: id, labels, use_llm: true }) });
+    if (!resp.ok) throw new Error(_backendDetail(resp.status, await resp.text()));
+    box.innerHTML = _renderExplanation(await resp.json());
+  } catch (e) {
+    box.innerHTML = `<div class="ex-note err">Could not get an explanation: ${_h(e.message)}</div>`;
+  } finally { if (btn) btn.disabled = false; }
+}
+
+function _renderExplanation(r) {
+  const L = r.llm || {}, T = r.template;
+  const stepRows = (steps, lookup) => steps.map(s => {
+    const t = lookup ? lookup[s.id] : s.text;
+    return `<div class="ex-step ${s.claim_ok === false ? 'warn' : ''}"><b>${_h(s.title || s.id)}</b> ${_h(t || '')}</div>`;
+  }).join('');
+  let h = '';
+  if (L.status === 'ok' && L.text) {
+    const by = Object.fromEntries((L.text.steps || []).map(s => [s.id, s.text]));
+    h += `<div class="ex-ai"><span class="ex-badge">${_h(L.label)}</span>${L.cache_hit ? ' <i>(cached)</i>' : ''}
+          ${L.fallback_used ? ' <i>(backup provider)</i>' : ''}<p>${_h(L.text.summary || '')}</p>${stepRows(T.steps, by)}
+          <div class="ex-fine">Every number and direction in this text was checked against the exact simulation.</div></div>
+          <details class="ex-tmpl"><summary>Verified explanation (no AI)</summary><p>${_h(T.summary)}</p>${stepRows(T.steps)}</details>`;
+  } else {
+    h += `<div class="ex-tmpl-open"><span class="ex-badge plain">Verified explanation</span><p>${_h(T.summary)}</p>${stepRows(T.steps)}</div>`;
+    const why = { rejected: 'An AI explanation was written, but it said something the simulation contradicts, so it was thrown away. This is the verified explanation instead.',
+                  unavailable: 'The AI explanation is unavailable right now (provider limit or outage). This is the verified explanation.',
+                  budget: 'Today\'s AI explanation allowance is used up. This is the verified explanation.' }[L.status];
+    if (why) h += `<div class="ex-note">${_h(why)}</div>`;
+  }
+  if (r.save_error) h += `<div class="ex-note err">${_h(r.save_error)}</div>`;
+  return h;
+}
+
+// ── What the run record and the math layer found (never silent: a failed save or a broken check is shown) ──
+function _showRunInfo(data) {
+  if (!data) return;
+  const names = ids => (ids || []).map(i => (window.QCConcepts ? QCConcepts.labelize(i) : i)).join(', ');
+  if (data.save_error) { execLog(`✖ ${data.save_error}`, 'err'); if (typeof toast === 'function') toast('Run record NOT saved — see the log', 'error'); }
+  (data.flags || []).forEach(f => execLog(`⚠ ${f.flag}: ${f.detail}`, 'warn'));
+  const m = data.math;
+  if (m && m.ran) {
+    const failedCode = (m.failed_checks || []).filter(c => /code|parsed/.test(c));
+    if (failedCode.length) execLog(`✖ Math check: the code that ran does not match the circuit (${failedCode.join('; ')})`, 'err');
+    else execLog('✓ Math check: the emitted code matches the circuit, step by step', 'ok');
+    if (m.result_check) execLog(`${m.result_check.ok === false ? '✖' : '✓'} Math check: observed counts vs exact prediction — ${m.result_check.detail || ''}`, m.result_check.ok === false ? 'err' : 'ok');
+    if ((m.broken_contract_steps || []).length) execLog(`⚠ ${m.broken_contract_steps.length} step(s) did not do what their explanation says: ${m.broken_contract_steps.join(', ')} (see the Steps list)`, 'warn');
+    if ((m.idle_steps || []).length) execLog(`⚠ ${m.idle_steps.length} step(s) don't change what you measured: ${m.idle_steps.join(', ')}`, 'warn');
+  }
+  if (data.record_id) { const b = document.getElementById('exec-explain-btn'); if (b) b.disabled = false; }
+  if (data.record_id) execLog(`🗂 Run record ${data.record_id} · GET ${BACKEND_URL}/runs/${data.record_id}`);
 }
 
 // ── Simulator results → show visually ────────────────────────────────

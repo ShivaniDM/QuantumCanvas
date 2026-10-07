@@ -150,6 +150,8 @@ class IonQRunner:
         self.api_key  = api_key
         self.endpoint = endpoint.rstrip('/')
         self.logger   = logger
+        self.last_submit = None      # {"http_status", "response"} of the most recent job submission (audit trail)
+        self.last_status = None      # most recent job object the provider returned (names the backend that ran)
         self.session  = requests.Session()
         self.session.headers.update({
             "Authorization": f"apiKey {self.api_key}",
@@ -197,6 +199,7 @@ class IonQRunner:
             raise RuntimeError(f"IonQ {resp.status_code}: {body}")
 
         data = resp.json()
+        self.last_submit = {"http_status": resp.status_code, "response": data}
         self.logger.save(f"ionq_response_{label}.json", data)
         self.logger.log(f"IonQ submitted job_id={data.get('id')} status={data.get('status')}")
         return data["id"]
@@ -276,6 +279,7 @@ class IonQRunner:
         resp = self.session.get(self.endpoint + self.STATUS_URL.format(job_id=job_id), timeout=15)
         resp.raise_for_status()
         data   = resp.json()
+        self.last_status = data
         status = data.get("status", "unknown")
         self.logger.log(f"IonQ job {job_id} status={status}")
 

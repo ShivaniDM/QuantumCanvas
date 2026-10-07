@@ -134,18 +134,18 @@ def to_code(low: Lowered, node_labels: dict | None = None, with_tail: bool = Tru
     node_labels = node_labels or {}
     body_lines: list[tuple[str, list]] = []
     plans = [_plan(g) for g in low.gates]
-    cur_top = None
-    for cond, grp in _cond_blocks(low.gates):
-        indent = ""
-        if cond is not None:
-            body_lines.append((f"with qc.if_test((qc.clbits[{cond[0]}], {cond[1]})):", []))
-            indent = "    "
-        for i, g in grp:
-            top = low.trace[i][-1]
-            if top != cur_top:
-                cur_top = top
-                body_lines.append((f"{indent}# {node_labels.get(top, top)}", []))
-            body_lines.append((indent + _plan_code(plans[i]), [i]))
+    # one header per top-level step, in order, even for a step that lowers to zero gates:
+    # the math layer pairs code blocks with IR steps one-to-one.
+    for top, idxs in low.node_ranges.items():
+        body_lines.append((f"# {node_labels.get(top, top)}", []))
+        for cond, grp in _cond_blocks([low.gates[i] for i in idxs]):
+            indent = ""
+            if cond is not None:
+                body_lines.append((f"with qc.if_test((qc.clbits[{cond[0]}], {cond[1]})):", []))
+                indent = "    "
+            for k, _ in grp:
+                i = idxs[k]
+                body_lines.append((indent + _plan_code(plans[i]), [i]))
 
     imports = sorted({p[1] for p in plans if p[0] == "append"})
     lines: list[tuple[str, list]] = [("from qiskit import QuantumCircuit", []), ("import numpy as np", [])]

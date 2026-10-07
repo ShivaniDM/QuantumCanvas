@@ -14,6 +14,7 @@ const QCConcepts = (() => {
     compiling: false,
     timer: null,
     allowed: null,            // Set of allowed ops while a problem is active
+    history: [],              // every add / remove / edit / move, with timestamps (saved with each run)
   };
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -319,7 +320,7 @@ const QCConcepts = (() => {
   function nextId() { return `N${S.nextNode++}`; }
   function buildNode(D) {
     const c = conceptOf(D.op);
-    const node = { id: nextId(), op: D.op, targets: [...(D.roles.targets || [])], controls: [...(D.roles.controls || [])],
+    const node = { id: null, op: D.op, targets: [...(D.roles.targets || [])], controls: [...(D.roles.controls || [])],
                    ancillas: [...(D.roles.ancillas || [])], classical: [], params: {}, condition: null, body: null, ref: null,
                    repeat: 1, metadata: { user_created: true } };
     const P = D.params;
@@ -363,6 +364,7 @@ const QCConcepts = (() => {
       }
     }
     if (!node.seq && node.seq !== 0) node.seq = state.nextSeq++;
+    node.id = nextId();                 // allocated last: a rejected or failed draft never burns an id
     return node;
   }
   const stripSeq = n => { const { seq, _replaces, ...rest } = n; return rest; };
@@ -396,6 +398,7 @@ const QCConcepts = (() => {
       const w = res.warnings.find(w => w.op_id === node.id || w.op_id === node.body?.id);
       if (w) toast(labelize(w.message), 'warn');
     }
+    logEdit(replaced ? 'wrap' : 'add', node, replaced ? { wraps: replaced.id } : { targets: node.targets });
     cancelDraft();
     renderSteps(); refreshButtons(); updateStatusText();
     toast(`${c.name} added`, 'valid');
@@ -411,9 +414,13 @@ const QCConcepts = (() => {
     const t = (n.targets || []).map(qLabel).join(', ');
     return `${c ? c.name.toUpperCase() : n.op.toUpperCase()}${t ? ' [' + t + ']' : ''}`;
   }
+  const idsInside = n => [n.id, ...(n.body ? idsInside(n.body) : [])];
+  const usersOf = id => S.nodes.filter(n => !idsInside(n).includes(id) && (n.ref === id || n.params?.via === id));
   function removeStep(id) {
-    const dependants = S.nodes.filter(n => (n.ref === id || n.params?.via === id) && n.id !== id);
+    const gone = S.nodes.find(n => n.id === id);
+    const dependants = gone ? idsInside(gone).flatMap(usersOf) : [];
     if (dependants.length) { toast(`Remove “${fallbackText(dependants[0])}” first: it uses this step.`, 'warn'); return; }
+    logEdit('remove', gone, { targets: gone?.targets });
     S.nodes = S.nodes.filter(n => n.id !== id);
     if (S.draft) cancelDraft();
     scheduleCompile(); refreshButtons(); updateStatusText(); renderSteps();
@@ -423,10 +430,14 @@ const QCConcepts = (() => {
     if (i < 0 || j < 0 || j >= S.nodes.length) return;
     const a = S.nodes[i], b = S.nodes[j];
     [a.seq, b.seq] = [b.seq, a.seq];
+    logEdit('move', a, { direction: dir > 0 ? 'down' : 'up' });
     S.nodes.sort((x, y) => x.seq - y.seq);
     scheduleCompile(); renderSteps();
   }
-  function wrapStep(id, kind) { pick(kind); if (S.draft) { S.draft.wrapId = id; renderDraft(); } }
+  function wrapStep(id, kind) {
+    const users = usersOf(id);
+    if (users.length) { toast(`“${fallbackText(users[0])}” refers to this step, so it can't be wrapped. Remove that step first.`, 'warn'); return; }
+    pick(kind); if (S.draft) { S.draft.wrapId = id; renderDraft(); } }
 
   function renderSteps() {
     const host = $('steps-list'); if (!host) return;
@@ -435,7 +446,7 @@ const QCConcepts = (() => {
     const rows = doc ? doc : S.nodes;
     const errs = res?.errors || [], warns = res?.warnings || [];
     const issueFor = id => errs.find(e => e.op_id === id) || null;
-    const warnFor = id => warns.find(w => w.op_id === id) || null;
+    const warnsFor = id => warns.filter(w => w.op_id === id);
     if (!rows.length) {
       host.innerHTML = `<div class="steps-empty">No steps yet.<br>Pick a concept on the left, then click the qubits it acts on.</div>`;
       renderIssues(); return;
@@ -446,14 +457,17 @@ const QCConcepts = (() => {
       const c = conceptOf(n.op) || { sym: '?', color: 'gray', name: n.op };
       const ps = res?.pseudocode?.steps?.find(s => s.id === n.id);
       const text = labelize(ps ? ps.code : fallbackText(n));
-      const e = issueFor(n.id), w = warnFor(n.id);
+      const e = issueFor(n.id), ws = warnsFor(n.id), w = ws[0];
+      const effect = ps?.effect ? labelize(ps.effect) : '';
+      const lied = ps && ps.claim_ok === false;
       const canWrap = own && QC_WRAPPABLE(n.op);
       const ownIdx = S.nodes.findIndex(x => x.id === n.id);
-      return `<div class="step ${e ? 'bad' : ''} ${w ? 'warn' : ''}" data-step="${n.id}">
+      return `<div class="step ${e ? 'bad' : ''} ${w || lied ? 'warn' : ''}" data-step="${n.id}">
         <span class="step-n">${i + 1}</span><span class="step-sym c-${c.color}">${c.sym}</span>
         <div class="step-main"><div class="step-text">${esc(text)}</div>
           ${legacy ? '<div class="step-tag">from a Classic tool</div>' : ''}
-          ${e ? `<div class="step-issue">${esc(labelize(e.message))}</div>` : ''}${!e && w ? `<div class="step-warn">${esc(labelize(w.message))}</div>` : ''}</div>
+          ${effect ? `<div class="step-effect ${lied ? 'lied' : ''}">${esc(effect)}</div>` : ''}
+          ${e ? `<div class="step-issue">${esc(labelize(e.message))}</div>` : ''}${!e ? ws.map(x => `<div class="step-warn" title="${esc(x.code)}">${esc(labelize(x.message))}</div>`).join('') : ''}</div>
         <div class="step-btns">
           <button title="How is this implemented?" onclick="QCConcepts.how('${n.id}')">ⓘ</button>
           ${own ? `<button title="Move up" ${ownIdx === 0 ? 'disabled' : ''} onclick="QCConcepts.move('${n.id}',-1)">↑</button>
@@ -522,8 +536,18 @@ const QCConcepts = (() => {
     _renderPC(ir, res.ok ? docForPanel(res) : null);
     document.getElementById('pc-overlay').classList.add('open');
   }
+  // Naming: people see the canvas labels (Q1, Q2 …) everywhere. Qiskit code needs 0-based indices, so only
+  // the COMMENTS are relabelled, and a legend line says which is which.
+  function relabelComments(line) {
+    const i = line.indexOf('#');
+    return i < 0 ? line : line.slice(0, i) + labelize(line.slice(i));
+  }
   function qiskitForPanel(res) {
-    return { lines: res.qiskit_lines.slice(), remarks: res.qiskit_lines.map(() => '') };
+    const legend = '# Qubits: ' + state.qubits.map((q, i) => `${q.label} = qubit ${i}`).join(', ');
+    const lines = res.qiskit_lines.map(relabelComments);
+    const at = lines.findIndex(l => l.startsWith('qc = '));
+    lines.splice(Math.max(at, 0), 0, legend);
+    return { lines, remarks: lines.map(() => '') };
   }
   async function openExecute() {
     const res = await compileNow();
@@ -576,12 +600,46 @@ const QCConcepts = (() => {
   function closeHow() { $('how-overlay').classList.remove('open'); }
 
   // ── hooks used by state.js / ui.js ─────────────────────────────────
-  function reset() { S.nodes = []; S.nextNode = 1; S.last = null; cancelDraft(); renderSteps(); refreshButtons(); }
+  // Edit history: so a gap in the numbering (a deleted step) is explained in the run record, not a mystery.
+  function logEdit(type, node, extra) {
+    S.history.push({ t: new Date().toISOString(), type, id: node?.id ?? null, op: node?.op ?? null, ...(extra || {}) });
+    if (S.history.length > 2000) S.history.shift();
+  }
+
+  // Everything needed to reopen a run: the concept steps themselves, not just the compiled result.
+  function snapshot() {
+    return { nodes: S.nodes.map(n => JSON.parse(JSON.stringify(n))), nextNode: S.nextNode, nextSeq: state.nextSeq,
+             legacy_ir: extractCanvasIR(state), classical_bits: 0, history: S.history.slice(),
+             qubits: state.qubits.map(q => ({ id: q.id, label: q.label, x: Math.round(q.x), y: Math.round(q.y) })) };
+  }
+  async function loadRun(run) {
+    // accepts both formats: run record v2 (input.canvas_json, already an object) and the browser's v1 file
+    let canvas = run.schema === 'quantumcanvas.run/v2' ? run.input?.canvas_json : run.canvas_json;
+    if (typeof canvas === 'string') canvas = JSON.parse(canvas);
+    const c = canvas?.concepts;
+    if (!c || !Array.isArray(c.nodes)) throw new Error('This run file has no concept steps saved with it (it was saved before reopening was supported).');
+    clearCanvas(); setMode('concepts');
+    const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
+    (c.qubits || []).forEach((q, i) => placeQubit(q.x ?? wrap.width / 2 + i * 120, q.y ?? wrap.height / 2));
+    S.nodes = c.nodes; S.nextNode = c.nextNode || (c.nodes.length + 1); state.nextSeq = c.nextSeq ?? c.nodes.length;
+    S.history = Array.isArray(c.history) ? c.history.slice() : [];
+    logEdit('open_run', null, { run_id: run.run_id || null });
+    await compileNow(); refreshButtons(); updateStatusText();
+    toast(`Opened run ${run.run_id || ''} with ${S.nodes.length} steps`, 'valid');
+  }
+  function openRunFile() { $('run-file-input').click(); }
+  async function onRunFile(e) {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { await loadRun(JSON.parse(await f.text())); } catch (err) { toast(err.message, 'error'); }
+  }
+
+  function reset() { if (S.nodes.length) logEdit('clear', null, { removed: S.nodes.map(n => n.id) }); S.nodes = []; S.nextNode = 1; S.last = null; cancelDraft(); renderSteps(); refreshButtons(); }
   const blocksQubitDelete = () => S.nodes.length > 0 || (active() && legacyOpsCount() > 0);
   function onCanvasChange() { if (active()) { scheduleCompile(); refreshButtons(); updateStatusText(); } }
 
   function init() {
     buildPalette();
+    const rf = $('run-file-input'); if (rf) rf.addEventListener('change', onRunFile);
     const d = $('concept-draft');
     if (d) { d.addEventListener('input', onDraftInput); d.addEventListener('change', onDraftInput); d.addEventListener('click', onDraftClick); }
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.draft) cancelDraft(); });
@@ -589,7 +647,7 @@ const QCConcepts = (() => {
   }
   document.addEventListener('DOMContentLoaded', init);
 
-  return { docFor: docForPanel, qiskitFor: qiskitForPanel, setMode, active, hasSteps, pick, cancelDraft, commitDraft, handleQubitClick, decorate, remove: removeStep, move: moveStep,
+  return { snapshot, loadRun, openRunFile, onRunFile, docFor: docForPanel, qiskitFor: qiskitForPanel, setMode, active, hasSteps, pick, cancelDraft, commitDraft, handleQubitClick, decorate, remove: removeStep, move: moveStep,
            wrap: wrapStep, how, closeHow, openPseudocode, openExecute, conceptDoc, reset, blocksQubitDelete, onCanvasChange,
            scheduleCompile, compileNow, applyAllowed, labelize, state: S, refreshButtons };
 })();

@@ -93,6 +93,7 @@ def validate(doc: Document) -> Report:
     for i, n in enumerate(doc.operations):
         top_index[n.id] = i
 
+    tilted: set[int] = set()         # qubits holding encoded / rotated data (a Shake would overwrite it)
     nonzero: set[int] = set()        # qubits that may hold something other than |0>
     superposed: set[int] = set()     # qubits that may be in superposition
     written: set[int] = set()        # classical bits already measured into
@@ -211,6 +212,15 @@ def validate(doc: Document) -> Report:
         # ── per-concept rules ───────────────────────────────────────
         if op in ("shake", "flip", "boost", "fourier"):
             need(n, len(T) >= 1, f"{op.capitalize()} needs at least one qubit.")
+            if op == "boost" and len(T) == 1:
+                W("W_BOOST_SINGLE_QUBIT",
+                  "Boost on one qubit can't amplify anything: with only two possible answers, Mark then Boost "
+                  "just flips the qubit.", n.id, "Boost needs at least 2 qubits in the search register.")
+            if op == "shake" and set(T) & tilted:
+                W("W_SHAKE_AFTER_ENCODE",
+                  f"Shake overwrites the data already loaded into {_fmt_q(set(T) & tilted)}: it only gives an even "
+                  f"split for a qubit that starts at 0.", n.id,
+                  "Shake first and Encode afterwards, or leave this Shake out.")
             if op == "fourier":
                 for k in ("inverse", "swaps"):
                     if k in P:
@@ -366,6 +376,14 @@ def validate(doc: Document) -> Report:
         before_of[node.id] = set(nonzero)
         check_node(node, False, i)
         new = body_effects_sim(node)
+        if node.op == "encode" and node.params.get("method") == "angle":
+            tilted.update(node.targets)
+        elif node.op == "rotate" and node.params.get("axis") in ("x", "y"):
+            tilted.update(node.targets)
+        elif node.op == "reset":
+            tilted.difference_update(node.targets)
+        elif node.op == "shake":
+            tilted.difference_update(node.targets)
         effects_of[node.id] = set(new) | {a for a in node.ancillas}
         if node.op == "measure":
             written.update(c for c in node.classical if 0 <= c < nc)

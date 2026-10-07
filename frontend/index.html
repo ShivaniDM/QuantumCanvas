@@ -99,7 +99,8 @@
 <div class="rpanel">
   <div class="rp-section concept-only" id="steps-section">
     <div id="problem-card" class="problem-card"></div>
-    <div class="rp-head">Steps</div>
+    <div class="rp-head steps-head">Steps <button class="open-run" onclick="QCConcepts.openRunFile()" title="Reopen a saved run file (.json)">📂 Open run</button></div>
+    <input type="file" id="run-file-input" accept=".json,application/json" hidden>
     <div id="steps-issues"></div>
     <div id="steps-list" class="steps-list"></div>
   </div>

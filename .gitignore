@@ -26,3 +26,8 @@ Thumbs.db
 
 # pytest
 .pytest_cache/
+
+# structured server log, research events (consent-gated, never committed), explanation cache
+logs/server.jsonl
+logs/research/
+logs/explain_cache/

@@ -68,6 +68,8 @@ The top bar has a **Classic | Concepts** switch. Classic is the original five pr
 * `frontend/js/concepts-catalog.js`, `concepts.js`, `problems.js`, `css/concepts.css` — UI
 * `docs/CONCEPTS_PLAN.md` (design) and `docs/CONCEPTS_STATUS.md` (what was built, decisions, known limits)
 
+Every run writes one **run record v2** (`logs/runs/<circuit>/runrecord_<id>.vN.json`, schema-validated, secrets redacted, with the seed, the transpiled circuit, the backend the provider says executed, the raw provider response and the edit history) and is checked by the **math layer** (`backend/mathlayer/`), which compares the code that ran with an independent reference and the counts with the exact prediction. **💬 Explain** in the Execute panel shows a verified explanation, plus an optional AI explanation that is discarded if it contradicts the simulation (`docs/LLM_SETUP.md`). **📂 Open run** (Steps panel) reopens a saved run.
+
 Concepts mode needs the backend running (`POST /compile`).
 
 ## Setup

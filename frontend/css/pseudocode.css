@@ -509,3 +509,14 @@
   background: var(--violet2); color: var(--violet);
   padding: 1px 7px; border-radius: 20px; margin-left: 8px; vertical-align: middle;
 }
+
+/* ── Explain this run (verified template + checked AI text) ── */
+.exec-explain{margin:10px 0;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--card);max-height:260px;overflow-y:auto;font-size:.74rem;line-height:1.5}
+.ex-badge{display:inline-block;font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;color:var(--violet);border:1px solid var(--violet);border-radius:10px;padding:1px 8px;font-family:'Space Mono',monospace}
+.ex-badge.plain{color:var(--teal);border-color:var(--teal)}
+.ex-step{padding:3px 0 3px 8px;border-left:2px solid var(--border);margin:3px 0}
+.ex-step.warn{border-left-color:var(--amber)}
+.ex-step b{display:block;font-family:'Space Mono',monospace;color:var(--gray);margin-right:6px}
+.ex-note{color:var(--gray);margin-top:8px}.ex-note.err{color:var(--rose)}
+.ex-fine{font-size:.62rem;color:var(--dim);margin-top:6px}
+.ex-tmpl{margin-top:8px}.ex-tmpl summary{cursor:pointer;color:var(--gray)}

@@ -27,6 +27,7 @@ import subprocess
 from pathlib import Path
 from config import settings
 import mongo_logger
+from runlog.redact import redact, redact_json_text
 
 
 def compute_circuit_hash(ir_json_str: str) -> str:
@@ -90,6 +91,8 @@ class ArtifactLogger:
         """
         if not self.run_dir:
             return None
+        # nothing secret ever reaches disk or the Mongo mirror (plan 9c): redact before writing
+        content = redact(content) if isinstance(content, (dict, list)) else redact_json_text(str(content))
         path = self.run_dir / filename
         if isinstance(content, (dict, list)):
             path.write_text(json.dumps(content, indent=2), encoding="utf-8")
@@ -113,7 +116,8 @@ class ArtifactLogger:
             print(f"[LOG] {message}")
             return
         ts   = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        line = f"[{ts}] {message}\n"
+        from runlog.redact import redact_text
+        line = f"[{ts}] {redact_text(str(message))}\n"
         path = self.run_dir / filename
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)

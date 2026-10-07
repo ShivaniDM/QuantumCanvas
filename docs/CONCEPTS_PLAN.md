@@ -12,7 +12,8 @@
    - what the current IR / circuit JSON looks like,
    - where pseudocode, Qiskit generation, Aer execution and IonQ submission live,
    - the frontend palette / drag-drop component and how a concept's params are edited,
-   - existing tests and how they run.
+   - existing tests and how they run,
+   - **what is logged today and where**: run storage, server logs, error handling. List every field section 9c requires that is currently missing.
    Then propose where the new modules go. **Match the existing structure; don't invent a parallel one.**
 2. Work milestone by milestone (section 9). **All tests for a milestone pass before starting the next.**
 3. Existing saved circuits and the current 5 concepts must keep working (write a migration, section 3.5).
@@ -31,7 +32,12 @@ Expand from 5 concepts to a vocabulary that can express real problem families (s
 Problem → Concept Canvas → Concept IR (L1) → validate → expand composites
         → Logical Gate IR (L2) → backend lowering (L3) → Aer | IonQ | (IBM later)
                      ↘ trace map (concept id → gate ranges) → "How is this implemented?" view
+
+        L1 + emitted code + results ──► MATH LAYER (step log, section 9a) ──► explanation (section 9b)
+                                                                                template first, LLM optional
 ```
+
+**Order of authority:** deterministic compile → math layer → explanation. An explanation (template or LLM) may only state what the math layer's step log contains. Nothing downstream may contradict the math layer.
 
 - **L1 Concept IR** stores *intent* (`compare`, `phase`, `uncompute`), never gates.
 - **L2 Logical Gate IR** is backend-neutral gates (`x`, `h`, `p`, `ry`, `cx`, `mcx`, `swap`, `measure`, `reset`, `if`).
@@ -243,17 +249,131 @@ Seed problems (each needs a reference solution that passes its own check in CI):
 | 13 | Dynamic | Reuse a qubit after measuring it | Measure, Reset |
 | 14 | Data encoding | Encode [0.2, 0.8] as probabilities of 1 | Encode(angle, arcsin_sqrt) |
 
+## 9a. Math layer (verification between compile and explanation)
+
+**Seed implementation:** `math_layer.py` + `test_math_layer.py`, already working on run `f9e60a7115d2`. Port it into the repo; don't rewrite from scratch.
+
+**Why:** run `f9e60a7115d2` executed correctly, but its pseudocode made two false claims: that Shake gives 50/50, and that Boost makes the marked answer more likely. Nothing checked them. The math layer is that check.
+
+It runs after every execution and produces a **step log** (JSON, stored with the run):
+
+| Check | What it computes | Catches |
+|---|---|---|
+| Code ↔ IR | Parses the emitted Qiskit **without `exec`** (`ast.literal_eval` per `qc.gate(...)` line). Splits it into blocks by the `# CONCEPT` comments and checks that each block's operator equals an **independent** reference lowering of its IR node. | compiler/emitter bugs, trace misalignment |
+| Step facts | Per node: per-qubit P(1) before/after, single-qubit entanglement entropy | the raw material for every explanation |
+| Counterfactual | Re-simulates with each node removed and reports the TVD shift of the measured distribution → `affects_result` | "4 of 6 steps did nothing to what you measured" |
+| Contracts | Each concept's explanation claim, tested numerically (table below) | unfaithful pseudocode/LLM text |
+| Result check | Exact predicted distribution vs observed counts. Chi-square, with p < 1e-3 → flag; any observed outcome with predicted probability 0 → flag | backend/result-path bugs (e.g. stub data, simulator-instead-of-QPU routing), plus hardware-noise reporting on real QPUs |
+
+**Concept contracts** (each claim the UI makes must be listed here, with its precondition):
+
+| Concept | Claim | Holds only if |
+|---|---|---|
+| Encode(angle) | P(1) = data | target fresh |
+| Shake | target becomes 50/50 | target was a definite 0/1 |
+| Entangle | entanglement increases | control in superposition |
+| Mark, Phase | probabilities unchanged | always (if not, it's a compiler bug) |
+| Boost | P(marked) increases | ≥2 qubits, and iteration count not past optimum |
+| Compare | flag = (register == value) | ancilla fresh |
+| Uncompute | ref's ancillas back to \|0⟩ | section 4.3 rules |
+| Fourier/Add | matches QFTGate / (v+c) mod 2ⁿ | — |
+
+When a contract is broken, the explanation must say so and give the precondition ("Shake only gives 50/50 from a definite 0 or 1; this qubit was already tilted by Encode"). A broken contract is a teaching moment, not an error.
+
+**Limits:** statevector facts up to 20 qubits (configurable). Above that, the log records `skipped: too large` plus the facts that don't need a statevector (code↔IR on small blocks, light cones, warnings). Never fake numbers.
+
+**Tests (required):**
+- Bell pair: all contracts hold.
+- 2-qubit Grover: Boost contract holds.
+- Run `f9e60a7115d2` golden log: Shake and Boost contracts broken; N1, N4, N5 and N6 have no effect on the result; p ≈ 0.53.
+- Impossible-outcome counts → flagged; 80/20 on a Bell pair → flagged.
+- Set 6 → `110`.
+
+## 9b. Explanation layer
+
+1. **Template explanation (deterministic, always shown first).** It is rendered *from the step log*, not from the IR alone. Every sentence is backed by a log field (e.g. "Removing this step wouldn't change your result" ⇐ `affects_result: false`).
+2. **LLM explanation (optional, clearly labelled "AI explanation, grounded in simulation").**
+   - Input: the step log, IR, pseudocode, and counts. **Not** raw amplitudes for large circuits.
+   - System rule: cite only step-log facts; every numeric claim must reference a step id.
+   - **Claim checker** (deterministic): extract numbers and direction words ("more likely", "50/50", "no effect") per step, and compare them to the log. On any mismatch, discard the LLM text, show the template, and log the failure (this is research data).
+   - Cache by `sha256(ir_json + results)`.
+3. **Providers.** Use an OpenAI-compatible client, so providers are config, not code. Fallback chain: primary → secondary → template-only. Hitting a quota must never break the page.
+
+| Provider | Card needed | Free allowance (verify at build time) | Role |
+|---|---|---|---|
+| Cloudflare Workers AI | No (only to go past the daily allowance) | 10k Neurons/day, resets 00:00 UTC; ≈120 explanations/day on Llama 3.1 8B, ~3–4× more on the fp8-fast variant | primary candidate |
+| Groq | No | per-model daily caps (e.g. gpt-oss-120b ≈1k req, 200k tokens/day) | primary candidate: bigger models |
+| Google AI Studio (Gemini) | No | daily request caps per model; free-tier prompts may be used by Google to improve products | only if consented / non-sensitive |
+| OpenRouter free models | No | ~50 req/day; free model list rotates | last-resort fallback |
+
+The API key lives server-side only (env var). Never put it in the frontend bundle.
+
+**Env vars (provider-neutral; switching provider = changing values, not code):**
+```
+LLM_BASE_URL   # e.g. https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1  or  https://api.groq.com/openai/v1
+LLM_API_KEY    # secret
+LLM_MODEL      # e.g. @cf/meta/llama-3.1-8b-instruct
+# optional fallback, same shape:
+LLM_FALLBACK_BASE_URL, LLM_FALLBACK_API_KEY, LLM_FALLBACK_MODEL
+```
+If `LLM_BASE_URL` or `LLM_API_KEY` is unset, the explanation layer runs template-only. It must not crash.
+
+## 9c. Logging
+
+**Evidence that logging is incomplete today** (run `f9e60a7115d2`):
+- `canvas_json` has empty `ops` even though the IR has 7 operations, so the run can't be reopened.
+- `raw` is `null`, so there's no provider response.
+- There is no transpiled circuit, seed, versions, timing, job id, or record of which backend actually executed.
+- Deleted node N7 left no trace.
+
+Principle: **a run record must be enough to reproduce and audit the run without the live app.**
+
+### Run record v2 (one per execution, append-only, validated against a JSON Schema before save)
+
+| Group | Fields |
+|---|---|
+| Identity | `run_id`, `session_id`, `user` (or `anonymous`), `created_at`, `finished_at`, `parent_run_id` (if re-run/edited) |
+| Versions | app git SHA, compiler version, IR schema version, `math_layer` version, qiskit / qiskit-aer / provider SDK versions |
+| Input | `canvas_json` (**must round-trip to the same IR — test it**), `ir_json`, validator errors + warnings |
+| Compile | L2 gate IR, trace map, pseudocode, `qiskit_py`, OpenQASM 3, IR hash |
+| Execution | `backend_requested` **and** `backend_executed` (from the provider's response, not our request — mismatch = flag; this catches the QPU→simulator routing bug), provider job id, provider status, transpiled circuit + basis gates + depth + 2-qubit count, shots, seed, queue / execution time, cost estimate vs billed, **full raw provider response** |
+| Results | counts, math-layer step log, result-check outcome |
+| Explanation | template text; if an LLM was used: provider, model, prompt hash, full prompt + response, claim-check pass/fail + which claims failed, tokens, latency, cache hit, fallback taken |
+| Errors | stage (`validate`/`compile`/`submit`/`fetch`/`math`/`explain`/`save`), error code, message. Stack traces go to server logs only, never to the client |
+
+### Other logs
+- **Server logs:** structured JSON lines (`ts`, `level`, `run_id`, `stage`, `event`, `duration_ms`), so every log line joins to a run.
+- **Canvas edit history:** node added/removed/edited with timestamps, so gaps like N7 are explained. Store it with the run as a compact diff list.
+- **Research interaction events** (Paper A: "How is this implemented?" opened, explanation viewed, time per step, re-runs after a broken contract). **Off by default.** Collect only with explicit consent and a study id, pseudonymous, stored separately from run records. Confirm IRB requirements before any study use.
+
+### Rules
+- A save that fails schema validation is an **error surfaced to the user**, never silently dropped.
+- Never log API keys, auth tokens, or emails; redact them before write (add a test with a fake key).
+- Size: raw provider responses and statevectors can be large. Store them compressed or in object storage, with a pointer from the record. Don't truncate silently.
+
+### Tests
+- **Replay:** load a stored run record → recompile → identical `qiskit_py`, and math layer predicted distribution identical.
+- **Round-trip:** `canvas_json → IR` equals the stored `ir_json` (would have failed on `f9e60a7115d2`).
+- A backend mismatch (requested QPU, executed simulator) is flagged in the record.
+- An injected compile error produces a record with `stage: compile`, not a missing run.
+- The redaction test passes.
+
 ## 9. Milestones
 
 | M | Scope | Done when |
 |---|---|---|
 | **M0** | Recon report (section 0.1). No code changes. | Report delivered with proposed file layout |
+| **M0.3** | Logging (9c): run record v2 schema + validation, canvas↔IR round-trip fix, `backend_executed` + raw response capture, structured server logs, edit history, redaction | Replay, round-trip, backend-mismatch, compile-error and redaction tests pass |
+| **M0.5** | Port `math_layer.py` + `test_math_layer.py`. Run it on every Aer run, store the step log with the run, and show broken contracts / no-effect steps in the UI. Also fix the empty `canvas_json` bug and the Q1/Q2 vs q0/q1 label mismatch seen in run `f9e60a7115d2`. | Golden log for `f9e60a7115d2` matches; all math-layer tests pass |
 | **M1** | Schema v0.3, conventions, validator, primitives (Set, Shake, Flip, Phase, Rotate, Swap, Measure, Reset), Control modifier, trace map, migration of existing 5 | Seed tests + migration golden test pass; existing circuits unchanged |
 | **M2** | Composites: Entangle, Encode, Compare (eq/neq), Mark (both modes), Boost, Uncompute | Problems 1–9, 14 pass checks |
 | **M3** | Fourier, Add (Draper, mod 2ⁿ) | Problems 10–11 pass; exhaustive Add test |
 | **M4** | Correct (Aer `if_test`), IonQ deferred-measurement rewrite, backend warnings | Problems 12–13 pass; teleport Aer ≡ IonQ-rewrite |
 | **M5** | UI: palette grouped by family, param forms (angle as π-fractions, integer values with live binary preview showing LSB→q0), validator messages inline, "How is this implemented?" panel driven by the trace | Manual walkthrough of problems 1–14 in the UI |
 | **M6** | Problem bank UI + auto-checker | A learner can pick a problem, build, run, get pass/fail + hint ladder |
+| **M7** | Explanation layer (9b): template rendered from step log, provider-agnostic LLM client with fallback chain, claim checker, cache, UI label | LLM text that contradicts the log is never shown (test with a deliberately wrong mocked response); quota exhaustion falls back to template |
+
+Note: the math layer comes **before** the new concepts (M0.5). Every new concept in M1–M4 must ship with its contract row and contract test.
 
 Each milestone ends with a short summary: what changed, test results, anything deviating from this plan and why.
 
