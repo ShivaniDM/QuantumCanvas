@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuantumCanvas · Learn</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/learn.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="js/learn-sim.js"></script>
+<script defer src="js/learn-notebook.js"></script>
+<script defer src="js/learn.js"></script>
+</head>
+<body>
+<div class="learn">
+
+  <!-- ── top bar ── -->
+  <header class="l-top">
+    <div class="l-menu-wrap">
+      <button class="l-icon-btn" id="menu-btn" aria-label="Menu" aria-expanded="false">☰</button>
+      <nav class="l-menu" id="menu" hidden>
+        <div class="l-menu-item has-sub">Files
+          <div class="l-sub">
+            <button data-act="open-file">Open .ipynb from computer…</button>
+            <button data-act="download-py">Download circuit as .py</button>
+            <button data-act="new">New empty circuit</button>
+          </div>
+        </div>
+        <div class="l-menu-item has-sub">Notebooks
+          <div class="l-sub" id="menu-notebooks"></div>
+        </div>
+        <div class="l-menu-item has-sub">Mode
+          <div class="l-sub">
+            <button class="on" disabled>● Learn — notebook + circuit</button>
+            <a href="index.html">○ Canvas builder (primitives)</a>
+          </div>
+        </div>
+        <button class="l-menu-item" data-act="tutorial">Tutorial</button>
+        <a class="l-menu-item" href="https://github.com/ShivaniDM/QuantumCanvas#readme" target="_blank" rel="noopener">Docs ↗</a>
+      </nav>
+    </div>
+    <span class="logo">QuantumCanvas</span>
+    <span class="tb-tag">LEARN</span>
+    <div class="l-file">
+      <input id="file-name" value="untitled-circuit" spellcheck="false" aria-label="File name">
+      <span class="l-file-ext">.py</span>
+    </div>
+    <div class="l-top-actions">
+      <button class="l-btn" id="undo-btn" title="Undo (Ctrl+Z)">↶ Undo</button>
+      <button class="l-btn" id="clear-btn" title="Remove all gates">Clear</button>
+      <select class="l-select" id="backend" title="Where to run">
+        <option value="local">Local simulator</option>
+        <option value="aer">Qiskit Aer (server)</option>
+      </select>
+      <button class="l-btn primary" id="run-btn">▶ Run</button>
+    </div>
+  </header>
+
+  <!-- ── left: operations + tracker ── -->
+  <aside class="l-left">
+    <section>
+      <h3>Operations</h3>
+      <p class="l-hint">Click a gate, then click a slot on a wire — or drag it there.</p>
+      <div id="palette"></div>
+    </section>
+    <section class="l-tracker">
+      <h3>Tracker</h3>
+      <div class="l-row">Qubit count
+        <span class="l-stepper"><button id="q-minus" aria-label="Remove qubit">−</button><b id="q-count">2</b><button id="q-plus" aria-label="Add qubit">+</button></span>
+      </div>
+      <div class="l-row">Steps performed <b id="step-count">0</b></div>
+      <div class="l-row">Depth <b id="depth">0</b></div>
+      <ol id="steps" class="l-steps"></ol>
+    </section>
+  </aside>
+
+  <!-- ── centre: circuit + results ── -->
+  <main class="l-center">
+    <div id="banner" class="l-banner" hidden></div>
+    <section class="l-card">
+      <header class="l-card-h">
+        <h2>Circuit</h2>
+        <span class="l-armed" id="armed-label">No gate selected</span>
+        <button class="l-btn sm" id="del-btn" disabled>Delete selected</button>
+      </header>
+      <div class="l-circuit-scroll"><div id="circuit" class="l-grid"></div></div>
+      <div class="l-angles" id="angles"></div>
+    </section>
+
+    <section class="l-card l-tabs-card">
+      <div class="l-tabs" role="tablist">
+        <button role="tab" data-tab="measure" class="on">Measurement</button>
+        <button role="tab" data-tab="math">Mathematics</button>
+        <button role="tab" data-tab="code">Qiskit code</button>
+      </div>
+      <div class="l-tabpane" id="tab-measure"></div>
+      <div class="l-tabpane" id="tab-math" hidden></div>
+      <div class="l-tabpane" id="tab-code" hidden></div>
+    </section>
+  </main>
+
+  <!-- ── right: notebook ── -->
+  <aside class="l-nb">
+    <header class="l-nb-h">
+      <span class="l-nb-ico">📓</span>
+      <div class="l-nb-title"><b id="nb-title">Notebook</b><span id="nb-sub">loading…</span></div>
+      <input type="file" id="file-input" accept=".ipynb,application/json" hidden>
+      <button class="l-btn sm" data-act="open-file">Open…</button>
+    </header>
+    <div id="nb-cells" class="l-cells"></div>
+  </aside>
+
+  <footer class="l-status">
+    <span id="sb-msg">Ready</span>
+    <span class="l-sb-right" id="sb-right"></span>
+  </footer>
+</div>
+
+<div id="toasts" class="l-toasts" aria-live="polite"></div>
+
+<div id="tutorial" class="l-modal" hidden>
+  <div class="l-modal-box">
+    <h2>How Learn mode works</h2>
+    <ol>
+      <li><b>Read</b> the notebook on the right, like in Colab.</li>
+      <li>Cells with a <span class="l-chip">◧ Visualise</span> button contain a circuit. Click it and the circuit appears in the middle.</li>
+      <li><b>Play:</b> pick a gate on the left, click a wire slot. Click a placed gate to see its matrix and the state after it.</li>
+      <li><b>Run</b> to see the measurement distribution. The <i>Qiskit code</i> tab always shows the matching code — copy it into Colab.</li>
+    </ol>
+    <p class="l-hint">Your notebook is never edited. The canvas is a sandbox next to it.</p>
+    <button class="l-btn primary" data-act="close-tutorial">Got it</button>
+  </div>
+</div>
+</body>
+</html>

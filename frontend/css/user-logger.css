@@ -1,0 +1,172 @@
+/* QuantumCanvas — User Logger styles
+   Two personal-copy save options (A browser · B download) + saved-logs
+   browser, plus the explicit "Save current state" circuit-log control.
+   Reuses the palette from main.css (:root vars). */
+
+/* Topbar "Logs" button */
+.logs-btn {
+  padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--gray); font-family: 'DM Sans', sans-serif; font-size: .78rem;
+  cursor: pointer; transition: all .15s; letter-spacing: .02em;
+}
+.logs-btn:hover { border-color: var(--gray); color: var(--white); }
+
+/* ── Inline "Save this run" block (inside the Execute panel) ── */
+.qc-save-inline {
+  padding: 12px 14px; border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(0,212,170,.03), transparent);
+}
+.qc-save-head {
+  font-family: 'Space Mono', monospace; font-size: .6rem; color: var(--teal);
+  text-transform: uppercase; letter-spacing: .12em; margin-bottom: 4px;
+}
+.qc-save-sub { font-size: .68rem; color: var(--gray); margin-bottom: 10px; }
+
+.qc-save-user { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.qc-lbl {
+  font-family: 'Space Mono', monospace; font-size: .62rem; color: var(--gray);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.qc-input {
+  font-family: 'Space Mono', monospace; font-size: .74rem;
+  background: var(--card); border: 1px solid var(--border);
+  color: var(--white); border-radius: 5px; padding: 5px 8px; width: 160px;
+}
+.qc-input:focus { outline: none; border-color: var(--teal); }
+.qc-user-hint { font-family: 'Space Mono', monospace; font-size: .62rem; color: var(--dim); }
+.qc-user-hint b { color: var(--teal); }
+
+/* option buttons */
+.qc-save-opts { display: flex; gap: 8px; }
+.qc-opt {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--card);
+  cursor: pointer; transition: all .15s; text-align: left;
+}
+.qc-opt:hover { border-color: var(--gray); }
+.qc-opt-key {
+  font-family: 'Space Mono', monospace; font-size: .78rem; font-weight: 700;
+  width: 22px; height: 22px; flex-shrink: 0; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--border); color: var(--white);
+}
+.qc-opt-txt { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.qc-opt-txt b { font-size: .72rem; color: var(--white); font-weight: 500; }
+.qc-opt-txt small { font-size: .58rem; color: var(--gray); }
+.qc-opt-a:hover { border-color: var(--teal); }
+.qc-opt-a:hover .qc-opt-key { background: var(--teal2); color: var(--teal); }
+.qc-opt-b:hover { border-color: var(--amber); }
+.qc-opt-b:hover .qc-opt-key { background: var(--amber2); color: var(--amber); }
+
+.qc-save-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.qc-default-lbl {
+  font-family: 'Space Mono', monospace; font-size: .62rem; color: var(--gray);
+  display: flex; align-items: center; gap: 6px;
+}
+.qc-default-sel {
+  font-family: 'Space Mono', monospace; font-size: .66rem;
+  background: var(--card); border: 1px solid var(--border);
+  color: var(--white); border-radius: 5px; padding: 3px 6px; cursor: pointer;
+}
+.qc-default-sel:focus { outline: none; border-color: var(--teal); }
+.qc-browse-btn {
+  margin-left: auto; font-family: 'DM Sans', sans-serif; font-size: .68rem;
+  background: transparent; border: 1px solid var(--border); color: var(--gray);
+  border-radius: 5px; padding: 5px 10px; cursor: pointer; transition: all .15s;
+}
+.qc-browse-btn:hover { border-color: var(--gray); color: var(--white); }
+
+.qc-save-status {
+  margin-top: 10px; font-family: 'Space Mono', monospace; font-size: .64rem;
+  color: var(--gray); min-height: 14px; line-height: 1.6; word-break: break-word;
+}
+.qc-save-status.ok  { color: var(--teal); }
+.qc-save-status.err { color: var(--rose); }
+.qc-mono { font-family: 'Space Mono', monospace; }
+.qc-dim  { color: var(--dim); }
+
+/* ── Saved-logs browser overlay ── */
+#qc-logs-overlay {
+  position: fixed; inset: 0; background: rgba(10,12,20,.88);
+  z-index: 260; display: none; align-items: flex-start; justify-content: center;
+  padding: 40px 20px; overflow-y: auto;
+}
+#qc-logs-overlay.open { display: flex; }
+#qc-logs-panel {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; width: 100%; max-width: 560px; flex-shrink: 0;
+  overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,.7);
+}
+.qc-logs-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 14px 16px 12px; border-bottom: 1px solid var(--border);
+}
+.qc-logs-label {
+  font-family: 'Space Mono', monospace; font-size: .6rem; color: var(--gray);
+  text-transform: uppercase; letter-spacing: .12em; margin-bottom: 3px;
+}
+.qc-logs-title { font-size: .9rem; font-weight: 500; color: var(--white); }
+.qc-logs-close {
+  background: none; border: none; color: var(--gray);
+  font-size: 1.2rem; cursor: pointer; line-height: 1; padding: 0 4px; transition: color .15s;
+}
+.qc-logs-close:hover { color: var(--white); }
+
+.qc-logs-body { max-height: 60vh; overflow-y: auto; padding: 6px 10px; }
+.qc-log-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 8px; border-bottom: 1px solid var(--border);
+}
+.qc-log-row:last-child { border-bottom: none; }
+.qc-log-main { flex: 1; min-width: 0; }
+.qc-log-title { font-size: .76rem; color: var(--white); margin-bottom: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qc-log-meta { font-family: 'Space Mono', monospace; font-size: .58rem; color: var(--gray); }
+.qc-log-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.qc-mini {
+  width: 26px; height: 26px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--card); color: var(--gray);
+  cursor: pointer; transition: all .15s; font-size: .78rem; line-height: 1;
+}
+.qc-mini:hover { border-color: var(--teal); color: var(--teal); }
+.qc-mini-danger:hover { border-color: var(--rose); color: var(--rose); }
+.qc-log-empty { padding: 24px 12px; text-align: center; font-size: .74rem; color: var(--gray); }
+
+.qc-logs-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-top: 1px solid var(--border);
+}
+.qc-clear-btn {
+  font-family: 'DM Sans', sans-serif; font-size: .68rem;
+  background: transparent; border: 1px solid var(--border); color: var(--gray);
+  border-radius: 5px; padding: 5px 10px; cursor: pointer; transition: all .15s;
+}
+.qc-clear-btn:hover { border-color: var(--rose); color: var(--rose); }
+
+/* Narrow screens — stack option buttons */
+@media (max-width: 520px) {
+  .qc-save-opts { flex-direction: column; }
+}
+
+/* ── Explicit "💾 Save current state" control (circuit-level log) ── */
+.exec-state-save {
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.exec-save-state-btn {
+  padding: 6px 14px; border-radius: 6px;
+  border: 1px solid var(--violet); background: var(--violet2);
+  color: var(--violet); font-family: 'DM Sans', sans-serif; font-size: .74rem;
+  font-weight: 500; cursor: pointer; transition: all .15s; letter-spacing: .02em;
+}
+.exec-save-state-btn:hover    { background: rgba(155,109,255,.2); }
+.exec-save-state-btn:disabled { opacity: .5; cursor: default; }
+.exec-save-status {
+  font-family: 'Space Mono', monospace; font-size: .62rem; color: var(--gray);
+  word-break: break-word;
+}
+.exec-save-status.ok  { color: var(--teal); }
+.exec-save-status.err { color: var(--rose); }
