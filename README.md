@@ -162,13 +162,7 @@ copy of a completed run — unrelated to the shared `logs/runs/` folder above:
 See `frontend/js/user-logger.js` for that, and `frontend/js/execute.js` for
 the "Save current state" mechanism.
 
-## Security
 
-- `IONQ_API_KEY` lives only in `.env` on the server
-- The frontend never sees the key — it only posts circuit data to `/execute`
-- `.env` is in `.gitignore`
-- `logs/` is version-controlled; only transient `execution.log` / `errors.log`
-  debug files are git-ignored
 
 ## Log artifacts
 
