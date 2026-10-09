@@ -1,9 +1,4 @@
-"""
-QuantumCanvas Backend — FastAPI
-Routes:
-  POST /execute   — receive canvas artifacts, run simulator or IonQ, save logs
-  GET  /job/{id}  — poll IonQ job status
-"""
+
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -164,7 +159,7 @@ async def execute(req: ExecuteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# In-memory job→run mapping (production: use a DB or Redis)
+
 _job_run_map: dict[str, str] = {}
 
 @app.get("/job/{job_id}", response_model=JobResponse)
@@ -200,10 +195,7 @@ async def poll_job(job_id: str):
 
 @app.post("/cost", response_model=CostResponse)
 async def estimate_cost(req: ExecuteRequest):
-    """
-    Dry-run the circuit on IonQ to get cost + gate count estimate.
-    Uses IonQ's dry_run mode — no QPU time consumed.
-    """
+   
     logger = ArtifactLogger()
     run_id = logger.new_run("IONQ_HARDWARE_ESTIMATE")   # dry-run gets its own log folder
     try:
@@ -229,12 +221,7 @@ async def estimate_cost(req: ExecuteRequest):
 
 @app.post("/save-log", response_model=SaveLogResponse)
 async def save_log(req: SaveLogRequest):
-    """
-    Option C — persist a run under logs/<username>/<run_id>/ so it can be
-    committed to the GitHub repo. No login/token required; the username is only
-    a folder-naming convention. When this backend runs from a local clone the
-    files land straight in the repo's logs/ folder, ready to `git add && commit`.
-    """
+  
     try:
         summary = save_user_run(
             req.username,

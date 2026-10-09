@@ -1,10 +1,4 @@
-// QuantumCanvas — Execute panel
-// Backends: Aer simulator (local qiskit) · IonQ simulator · IonQ hardware (QPU).
-// Simulators run straight to results. Hardware requires a dry-run cost estimate
-// and explicit confirmation before it is submitted.
-//
-// Backend URL — use the local dev server when the page is served from
-// localhost (so the new Aer backend can be tested), otherwise the Azure host.
+
 const BACKEND_URL =
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
     ? 'http://localhost:8000'
