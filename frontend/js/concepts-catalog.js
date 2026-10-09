@@ -49,7 +49,7 @@ const QC_CONCEPTS = {
   },
   shake: {
     sym: '◎', color: 'teal', name: 'Shake', short: 'SHAKE',
-    desc: 'Spread qubits into an even mix of 0 and 1',
+    desc: 'Put qubits into an equal superposition of 0 and 1',
     req: 'Any state',
     roles: [{ key: 'targets', label: 'Qubits', min: 1 }], params: [],
   },

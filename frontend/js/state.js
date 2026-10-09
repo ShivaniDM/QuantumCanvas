@@ -202,24 +202,36 @@ function applyPrimitive(prim, qid){
         const partner = state.qubits.find(x=>x.id===(e.src===qid?e.tgt:e.src));
         if(partner && partner.state==='entangled'){
           partner.state = 'measured';
-          partner.result = result === '0' ? '1' : '0'; // correlated
+          // Shake + Entangle (CNOT) makes (|00⟩ + |11⟩)/√2: both qubits always give the SAME result.
+          partner.result = result;
           partner.ops.push({op:'look', seq:lookSeq, correlated:true});
           addLog(`◙ Measure → ${partner.id} collapsed to |${partner.result}⟩ (correlated)`, 'violet');
         }
       }
     });
     showResult(qid, result);
-    toast(`Measured: ${qid} = |${result}⟩`, 'valid');
+    toast(`Measured: ${q.label || qid} = |${result}⟩`, 'valid');
   }
 
   renderAll();
   updateStatus();
 }
 
+// Grover with one marked state among N = 2^n qubits' states: after k Boosts, P(marked) = sin²((2k+1)·θ), sin θ = 1/√N.
+function groverChances(q){
+  const n = state.qubits.length, N = Math.pow(2, n), k = q.ops.filter(o=>o.op==='boost').length;
+  const th = Math.asin(1/Math.sqrt(N)), pm = Math.pow(Math.sin((2*k+1)*th), 2);
+  const marked = q.ops.some(o=>o.op==='mark');
+  // a qubit that is 1 in the marked answer, or one that is 0 in it (Shaken, Boosted, not Marked)
+  const p1 = marked ? pm + (1-pm) * (N/2 - 1) / (N - 1) : (1-pm) * (N/2) / (N - 1);
+  return { k, pm, p1 };
+}
+
 function measureQubit(q){
   // probability based on state
-  if(q.state === 'boosted') return '1'; // high probability
-  if(q.state === 'marked') return Math.random() > 0.1 ? '1' : '0';
+  if(q.state === 'boosted') return Math.random() < groverChances(q).p1 ? '1' : '0';
+  if(q.state === 'marked') return Math.random() > 0.5 ? '1' : '0';   // Mark changes a hidden sign, not the chances
+  if(q.state === 'super' && q.ops.some(o=>o.op==='boost')) return Math.random() < groverChances(q).p1 ? '1' : '0';
   if(q.state === 'super') return Math.random() > 0.5 ? '1' : '0';
   if(q.state === 'entangled') return Math.random() > 0.5 ? '1' : '0';
   return '0';
@@ -231,27 +243,37 @@ function showResult(qid, result){
   const note = document.getElementById('result-note');
   const q = state.qubits.find(x=>x.id===qid);
 
+  // A quick canvas preview, not a simulation: the exact result comes from Execute (Aer).
+  const preview = ' <span style="opacity:.7">· quick preview — press <b>Execute</b> for the real result</span>';
   let p0, p1, noteText;
-  if(q.ops.some(o=>o.op==='boost') || result==='1'){
-    p0 = 5; p1 = 95;
-    noteText = `<b>Grover-like result</b> — Shake→Mark→Boost→Measure found the target`;
-  } else if(q.ops.filter(o=>o.op==='shake').length && !q.ops.some(o=>o.op==='mark')){
+  const linked = state.edges.some(e => e.src === qid || e.tgt === qid);
+  if(q.ops.some(o=>o.op==='boost') && state.qubits.some(x=>x.ops.some(o=>o.op==='mark'))){
+    const { k, pm, p1: pq1 } = groverChances(q);
+    p1 = Math.round(100*pq1); p0 = 100 - p1;
+    noteText = `<b>Search result</b> — after ${k} Boost${k>1?'s':''}, the marked answer has a ${Math.round(100*pm)}% chance`;
+  } else if(linked){
     p0 = 50; p1 = 50;
-    noteText = `<b>Equal superposition</b> — 50/50 without Mark or Boost`;
+    noteText = `<b>Entangled</b> — 50/50 on its own, but its partner always gives the same result (got |${result}⟩)`;
+  } else if(q.ops.some(o=>o.op==='shake')){
+    p0 = 50; p1 = 50;
+    noteText = q.ops.some(o=>o.op==='mark')
+      ? `<b>Still 50/50</b> — Mark only flips a hidden sign; Boost turns it into a change you can measure (got |${result}⟩)`
+      : `<b>Equal superposition</b> — 50/50 (got |${result}⟩)`;
   } else {
-    p0 = result==='0'?80:20; p1 = result==='0'?20:80;
+    p0 = result==='0'?100:0; p1 = 100-p0;
     noteText = `<b>${qid}</b> collapsed to |${result}⟩`;
   }
+  noteText += preview;
 
   bars.innerHTML = `
     <div class="result-bar-wrap">
       <div class="result-bar-val" style="color:var(--teal)">${p0}%</div>
-      <div class="result-bar" style="height:${p0*0.5}px;background:var(--teal)"></div>
+      <div class="result-bar" style="height:${p0*0.4}px;background:var(--teal)"></div>
       <div class="result-bar-lbl">|0⟩</div>
     </div>
     <div class="result-bar-wrap">
       <div class="result-bar-val" style="color:var(--rose)">${p1}%</div>
-      <div class="result-bar" style="height:${p1*0.5}px;background:var(--rose)"></div>
+      <div class="result-bar" style="height:${p1*0.4}px;background:var(--rose)"></div>
       <div class="result-bar-lbl">|1⟩</div>
     </div>`;
   note.innerHTML = noteText;
@@ -267,6 +289,8 @@ function invalidFlash(qid){
 
 function toast(msg, type='valid'){
   const wrap = document.getElementById('toast-wrap');
+  // keep at most two messages on screen so they never pile up over the result card or the step builder
+  while(wrap.children.length >= 2) wrap.firstElementChild.remove();
   const t = document.createElement('div');
   t.className = 'toast '+type;
   t.textContent = msg;

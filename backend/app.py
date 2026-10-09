@@ -503,6 +503,7 @@ async def research_event(ev: ResearchEvent):
 def health():
     from explain.llm import configured_providers
     return {"status": "ok", "ionq_configured": bool(settings.IONQ_API_KEY),
+            "qpu_enabled": bool(settings.IONQ_API_KEY) and str(settings.ALLOW_QPU_SUBMIT).lower() == "on",
             "llm_configured": len(configured_providers(settings)),          # how many providers; never the values
             "research_logging": str(settings.RESEARCH_LOGGING).lower() == "on"}
 

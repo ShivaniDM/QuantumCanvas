@@ -10,10 +10,41 @@ const BACKEND_URL =
     ? 'http://localhost:8000'
     : 'https://quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
 
-// A 4xx from the concept compiler carries a plain-language reason in {"detail": "..."}; show just that.
+// The server puts a plain-language reason in {"detail": "..."}; show just that (never raw JSON).
 function _backendDetail(status, text) {
-  try { const d = JSON.parse(text).detail; if (typeof d === 'string' && status < 500) return d; } catch (_) {}
-  return `Backend ${status}: ${text}`;
+  try {
+    const d = JSON.parse(text).detail;
+    if (typeof d === 'string') return status < 500 ? d : `Something went wrong on the server. ${d}`;
+  } catch (_) {}
+  return status < 500 ? `The server could not run this (error ${status}).`
+                      : `Something went wrong on the server (error ${status}). Try again, or use the Aer simulator.`;
+}
+// fetch() throws a TypeError when the server can't be reached at all (offline, or still waking up).
+function _friendlyError(e) {
+  return (e instanceof TypeError)
+    ? "Couldn't reach the QuantumCanvas server. It may be waking up: wait about 30 seconds and try again."
+    : e.message;
+}
+
+// Which backends this server can actually run (asked once per page). Unknown = leave buttons enabled.
+const QC_AVAILABLE = { ionq: true, qpu: true, checked: false };
+async function _checkAvailability() {
+  if (QC_AVAILABLE.checked) return QC_AVAILABLE;
+  try {
+    const r = await fetch(`${BACKEND_URL}/health`);
+    if (r.ok) {
+      const h = await r.json();
+      if (h.ionq_configured === false) { QC_AVAILABLE.ionq = false; QC_AVAILABLE.qpu = false; }
+      if (h.qpu_enabled === false) QC_AVAILABLE.qpu = false;
+      QC_AVAILABLE.checked = true;
+    }
+  } catch (_) { /* server asleep or offline: the run itself will say so */ }
+  return QC_AVAILABLE;
+}
+function _applyAvailability() {
+  const off = (id, why) => { const b = document.getElementById(id); if (b) { b.disabled = true; b.title = why; } };
+  if (!QC_AVAILABLE.ionq) off('exec-run-ionq', "IonQ isn't set up on this server right now. Use the Aer simulator.");
+  if (!QC_AVAILABLE.qpu) off('exec-run-hw', 'Real hardware is switched off on this server. Use the Aer simulator.');
 }
 
 // One id per browser tab, sent with every run so records from the same sitting can be grouped (no personal data).
@@ -47,6 +78,7 @@ function openExecutePanel() {
   const qiskit = generateQiskit(ir, doc);
   _renderExecPanel(ir, doc, qiskit);
   document.getElementById('exec-overlay').classList.add('open');
+  _checkAvailability().then(_applyAvailability);
 }
 function closeExecutePanel() {
   if(execState.polling) { clearInterval(execState.polling); execState.polling = null; }
@@ -152,7 +184,7 @@ function _renderExecPanel(ir, doc, qiskit) {
     <button class="exec-run-sim-btn" id="exec-explain-btn" onclick="execExplain()" disabled
             title="Run something first, then ask for an explanation checked against the simulation">💬 Explain</button>
     <button class="exec-cancel-btn" onclick="closeExecutePanel()">Close</button>
-    <span class="exec-save-note">Artifacts saved to logs/runs/</span>
+    <span class="exec-save-note">Not sure? Use <b>Aer Simulator</b>: free, instant, exact.</span>
   </div>`;
 
   // Reflect whether this exact circuit was already saved in an earlier
@@ -266,8 +298,8 @@ async function saveCurrentState() {
     execLog(`💾 Circuit ${note}`, 'ok');
     _setSaveStatus(`✓ logs/runs/${data.run_id}/`, 'ok');
   } catch (e) {
-    execLog(`✖ Save failed: ${e.message}`, 'err');
-    _setSaveStatus(`✖ ${e.message}`, 'err');
+    execLog(`✖ Save failed: ${_friendlyError(e)}`, 'err');
+    _setSaveStatus(`✖ ${_friendlyError(e)}`, 'err');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -284,6 +316,7 @@ function _setRunButtonsDisabled(disabled) {
     const b = document.getElementById(id);
     if(b) b.disabled = disabled;
   });
+  if (!disabled) _applyAvailability();
 }
 
 // ── Run a simulator backend ('aer' or 'ionq') — no cost, straight to results
@@ -329,7 +362,7 @@ async function execRunSimulator(backend) {
     }
   } catch(e) {
     _setPipeStep(5);
-    execLog(`✖ ${e.message}`, 'err');
+    execLog(`✖ ${_friendlyError(e)}`, 'err');
     _setRunButtonsDisabled(false);
   }
 }
@@ -398,7 +431,7 @@ async function execExplain() {
     if (!resp.ok) throw new Error(_backendDetail(resp.status, await resp.text()));
     box.innerHTML = _renderExplanation(await resp.json());
   } catch (e) {
-    box.innerHTML = `<div class="ex-note err">Could not get an explanation: ${_h(e.message)}</div>`;
+    box.innerHTML = `<div class="ex-note err">Could not get an explanation: ${_h(_friendlyError(e))}</div>`;
   } finally { if (btn) btn.disabled = false; }
 }
 
@@ -597,7 +630,7 @@ async function execRunQPU() {
     }
   } catch(e) {
     // e.message now carries IonQ's real reason (e.g. insufficient credits / access)
-    execLog(`✖ Hardware submit rejected: ${e.message}`, 'err');
+    execLog(`✖ Hardware submit rejected: ${_friendlyError(e)}`, 'err');
     document.getElementById('exec-qpu-confirm').disabled = false;
     document.getElementById('exec-qpu-cancel').disabled  = false;
   }

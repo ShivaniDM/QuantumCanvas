@@ -41,7 +41,7 @@ const QCMath = (() => {
     else {
       if (s.equation) body += `<div class="mt-eq">${h(s.equation)}</div>`;
       if (s.matrix) {
-        body += `<div class="mt-sec">Gate matrix <span class="mt-sub">acts on ${h(s.local_qubits.join(', '))}</span></div>
+        body += `<div class="mt-sec">Gate matrix <span class="mt-sub">acts on ${h(s.local_qubits.join(', '))} · kets read |… Q2 Q1⟩, rightmost digit = Q1</span></div>
           <div class="mt-row">${matrix(s.matrix)}</div>
           <div class="mt-sec">What it does to each basis state</div>
           <div class="mt-actions">${s.action.map(a => `<div><code>U|${h(a.from)}⟩ = ${h(a.to)}</code></div>`).join('')}</div>`;
@@ -52,7 +52,7 @@ const QCMath = (() => {
       }
       body += `<div class="mt-sec">State</div><div class="mt-states">${stateBlock(s.before, '|ψ⟩ before')}<span class="mt-arrow">→</span>${stateBlock(s.after, '|ψ⟩ after')}</div>`;
       if (s.product) {
-        body += `<div class="mt-sec">The calculation: U · |ψ⟩ = |ψ′⟩ <span class="mt-sub">(whole circuit, ${m.n_qubits} qubit${m.n_qubits > 1 ? 's' : ''})</span></div>
+        body += `<div class="mt-sec">The calculation: U · |ψ⟩ = |ψ′⟩ <span class="mt-sub">(this step's gate, written on all ${m.n_qubits} qubit${m.n_qubits > 1 ? 's' : ''})</span></div>
           <div class="mt-prod">${matrix(s.product.U)}<span class="mt-op">·</span>${column(s.product.before, s.product.basis)}<span class="mt-op">=</span>${column(s.product.after, s.product.basis)}</div>`;
       }
     }

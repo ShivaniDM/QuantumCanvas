@@ -46,8 +46,8 @@ function generatePseudocode(ir){
       addStep('SHAKE',tgts,
         `SHAKE [${tgts.join(', ')}]  →  spread ${tgtStr} into ${batchStates === 2 ? 'both possibilities' : `all ${batchStates} combinations`} equally`,
         tgts.length===1
-          ? `Shake puts ${tgts[0]} into superposition — both |0⟩ and |1⟩ are simultaneously possible with equal probability. The qubit is no longer a definite 0 or 1.`
-          : `Shake puts each of [${tgts.join(', ')}] into superposition. All ${batchStates} combinations of these ${batchN} qubits now exist simultaneously with equal probability.`,
+          ? `Shake puts ${tgts[0]} into superposition — it is now in an equal superposition of |0⟩ and |1⟩: measuring it gives 0 or 1 with a 50% chance each.`
+          : `Shake puts each of [${tgts.join(', ')}] into superposition. The state is now an equal superposition of all ${batchStates} combinations of these ${batchN} qubits, so each one has the same chance of being measured.`,
         qnNote);
     }
     else if(op==='mark'){

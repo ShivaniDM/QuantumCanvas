@@ -37,7 +37,7 @@ def describe(n: Node, index_of: dict | None = None) -> tuple[str, str, str]:
     reps = f"  ×{n.repeat}" if n.repeat > 1 else ""
     if op == "shake":
         return (f"SHAKE [{_q(T)}]{reps}  →  spread into every possibility equally",
-                "Shake puts each qubit into an even mix of 0 and 1, so all outcomes are equally likely.",
+                "Shake puts each qubit into an equal superposition of 0 and 1, so all outcomes are equally likely.",
                 "Hadamard on each qubit: H|0⟩ = (|0⟩+|1⟩)/√2")
     if op == "set":
         v = P.get("value", 0)

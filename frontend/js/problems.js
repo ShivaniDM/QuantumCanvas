@@ -5,6 +5,8 @@
 const QCProblems = (() => {
   const P = { list: [], active: null, hints: 0, result: null, loadError: null };
   const $ = id => document.getElementById(id);
+  // Problems are written with 0-based names (q0, q1); the canvas shows Q1, Q2 … so show those.
+  const qn = s => String(s ?? '').replace(/\bq(\d+)\b/g, (m, i) => `Q${+i + 1}`);
   const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const FAMILY = {
     state_preparation: 'State preparation', correlation: 'Correlation', manipulation: 'Manipulation', phase: 'Phase', search: 'Search',
@@ -29,7 +31,7 @@ const QCProblems = (() => {
     fams.forEach(f => {
       h += `<h4 class="prob-fam">${esc(FAMILY[f] || f)}</h4>`;
       P.list.filter(p => p.family === f).forEach(p => {
-        h += `<div class="prob-item ${P.active?.id === p.id ? 'on' : ''}"><div><div class="prob-st">${esc(p.statement)}</div>
+        h += `<div class="prob-item ${P.active?.id === p.id ? 'on' : ''}"><div><div class="prob-st">${esc(qn(p.statement))}</div>
           <div class="prob-meta">${p.qubits} qubit${p.qubits > 1 ? 's' : ''} · ${p.allowed_concepts.map(esc).join(', ')}</div></div>
           <button onclick="QCProblems.start('${p.id}')">${P.active?.id === p.id ? 'Restart' : 'Start'}</button></div>`;
       });
@@ -89,10 +91,10 @@ const QCProblems = (() => {
     if (!p) { host.innerHTML = ''; host.classList.remove('open'); return; }
     const r = P.result;
     let h = `<div class="pc-top"><span class="pc-tag">PROBLEM</span><button class="cd-x" title="Leave problem" onclick="QCProblems.stop()">×</button></div>
-      <div class="pc-st">${esc(p.statement)}</div>
+      <div class="pc-st">${esc(qn(p.statement))}</div>
       <div class="pc-allow">Allowed: ${p.allowed_concepts.map(c => `<span class="chip">${esc(c)}</span>`).join(' ')}</div>`;
     if (p.hint_ladder?.length) {
-      h += `<div class="pc-hints">${p.hint_ladder.slice(0, P.hints).map((t, i) => `<div class="pc-hint"><b>Hint ${i + 1}</b> ${esc(t)}</div>`).join('')}</div>`;
+      h += `<div class="pc-hints">${p.hint_ladder.slice(0, P.hints).map((t, i) => `<div class="pc-hint"><b>Hint ${i + 1}</b> ${esc(qn(t))}</div>`).join('')}</div>`;
     }
     h += `<div class="pc-actions"><button class="pc-check" onclick="QCProblems.check()">Check my circuit</button>
       <button class="pc-hintbtn" ${P.hints >= (p.hint_ladder?.length || 0) ? 'disabled' : ''} onclick="QCProblems.hint()">Hint${P.hints ? ` (${P.hints}/${p.hint_ladder.length})` : ''}</button></div>`;

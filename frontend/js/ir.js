@@ -54,7 +54,9 @@ function extractCanvasIR(s) {
   const globalLog = allEntries.map((e,i) => ({ step:i+1, qubit:e.qubit, op:e.op, correlated:e.correlated, auto:e.auto }));
 
   const N = Math.pow(2,n);
-  const optimal = Math.max(1, Math.round(Math.PI/4*Math.sqrt(N)));
+  // Best number of Boosts for one marked answer among N: k = round(π/(4θ) − 1/2), with sin θ = 1/√N
+  // (N=4 → 1, N=8 → 2, N=16 → 3). The rough rule π/4·√N rounds to 2 for N=4, where 2 Boosts give only 25%.
+  const optimal = Math.max(1, Math.round(Math.PI / (4 * Math.asin(1 / Math.sqrt(N))) - 0.5));
 
   return { n, N, optimal, qubits, edges, globalLog, validation:null };
 }
@@ -130,7 +132,10 @@ function validateIR(ir) {
 
   // GV-02: over-boosted
   if(anyBoosted){
-    const boostCount = ir.qubits.reduce((a,q)=>a+q.ops.filter(o=>o==='boost').length,0);
+    // Count Boost CLICKS, not per-qubit entries: one click boosts several qubits under the same seq stamp.
+    const boostSeqs = new Set();
+    ir.qubits.forEach(q => (q.taggedOps || []).forEach((t, i) => { if (t.op === 'boost') boostSeqs.add(t.seq ?? `${q.id}:${i}`); }));
+    const boostCount = boostSeqs.size;
     if(boostCount > ir.optimal)
       W('GV-02',null,
         `Boost applied ${boostCount}×; optimal for a ${Math.pow(2,ir.n)}-state search space is ${ir.optimal}×.`,

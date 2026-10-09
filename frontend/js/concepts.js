@@ -557,6 +557,7 @@ const QCConcepts = (() => {
     document.getElementById('exec-panel')._concept = res.document;
     _renderExecPanel(ir, doc, qiskitForPanel(res));
     document.getElementById('exec-overlay').classList.add('open');
+    _checkAvailability().then(_applyAvailability);
     return true;
   }
   const conceptDoc = () => (document.getElementById('exec-panel')._concept) || null;

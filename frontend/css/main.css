@@ -80,8 +80,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--white);fo
 .prim-req{font-size:.65rem;margin-top:2px}
 
 /* ── toast / feedback ── */
-#toast-wrap{position:absolute;bottom:60px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;z-index:100;pointer-events:none}
-.toast{padding:8px 16px;border-radius:8px;font-size:.8rem;font-weight:500;opacity:0;transform:translateY(6px);transition:all .25s;white-space:nowrap;border:1px solid transparent}
+#toast-wrap{position:absolute;top:16px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;z-index:100;pointer-events:none}
+.toast{padding:8px 16px;border-radius:8px;font-size:.8rem;font-weight:500;opacity:0;transform:translateY(-6px);transition:all .25s;white-space:normal;max-width:min(560px,80vw);text-align:center;background-color:var(--card);border:1px solid transparent}
 .toast.show{opacity:1;transform:translateY(0)}
 .toast.valid{background:rgba(0,212,170,.12);border-color:rgba(0,212,170,.3);color:var(--teal)}
 .toast.warn{background:rgba(255,184,77,.12);border-color:rgba(255,184,77,.3);color:var(--amber)}
