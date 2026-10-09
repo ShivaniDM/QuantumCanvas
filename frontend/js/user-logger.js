@@ -1,14 +1,15 @@
 // QuantumCanvas — User Logger
-// Lets each user keep a personal copy of a completed run. Two options, both
-// self-contained, no backend required:
+// Lets each user choose where a run's log goes. Three options, all self-contained:
 //
-//   A · Browser storage  — localStorage, personal history
+//   A · Browser storage  — localStorage, no backend, personal history
 //   B · Download file     — a .json bundle saved to the file manager
+//   C · GitHub repo       — logs/<username>/<run_id>/ in the repo (no login;
+//                           username is just a folder-naming convention)
 //
-// (The circuit's canonical log — canvas/IR/pseudocode/Qiskit/results — is
-// handled separately by the backend's logs/runs/<circuit_hash>/ mechanism,
-// see execute.js's "💾 Save current state" button. This module is only for
-// a user's own personal copy of a run, unrelated to that.)
+// Option C posts to the backend /save-log route when a backend is reachable
+// (ideal when you run `python app.py` from your own clone — files land straight
+// in the repo). If no backend is reachable, it falls back to a repo-shaped
+// download you can drop into logs/<username>/<run_id>/ and commit yourself.
 //
 // Exposes window.QCLogger plus the on* / qc* globals used by inline handlers.
 
@@ -19,6 +20,14 @@
   const LS_RUN     = id => `qc_log_${id}`; // full record per run
   const LS_PREFS   = 'qc_log_prefs';       // { defaultOption, username }
   const SCHEMA     = 'quantumcanvas.run/v1';
+
+  // Reuse the Execute panel's backend URL if present; otherwise derive it.
+  function backendURL() {
+    if (typeof BACKEND_URL === 'string' && BACKEND_URL) return BACKEND_URL;
+    return (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      ? 'http://localhost:8000'
+      : '';
+  }
 
   // ── Preferences ──────────────────────────────────────────────────────
   function getPrefs() {
@@ -33,7 +42,7 @@
     return next;
   }
 
-  // ── Username → safe label (used only to personalise filenames) ───────
+  // ── Username → safe folder name (mirrors backend user_logs.sanitise) ──
   function sanitiseUsername(name, fallback = 'anonymous') {
     const cleaned = String(name || '').trim().toLowerCase()
       .replace(/[^a-z0-9_.-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
@@ -119,12 +128,15 @@
   }
 
   // ── Option B · Download a file ───────────────────────────────────────
-  function download(record) {
+  function download(record, opts) {
+    opts = opts || {};
     const user  = sanitiseUsername(record.username || getPrefs().username || 'anonymous');
     const runId = record.run_id || defaultRunId(record);
     const bundle = Object.assign({ schema: SCHEMA, username: user, run_id: runId }, record);
     const json = JSON.stringify(bundle, null, 2);
-    const name = `quantumcanvas_${user}_${runId}.json`;
+    const name = opts.repoPath
+      ? `${user}__${runId}__run.json`               // repo-shaped (Option C fallback)
+      : `quantumcanvas_${user}_${runId}.json`;      // plain download (Option B)
     const blob = new Blob([json], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
@@ -141,6 +153,44 @@
            `${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}_${be}`;
   }
 
+  // ── Option C · GitHub repo (via backend, or download fallback) ───────
+  async function saveGitHub(record, username) {
+    const user = sanitiseUsername(username || record.username || getPrefs().username);
+    const url  = backendURL();
+    const runId = record.run_id || defaultRunId(record);
+    const full = Object.assign({}, record, { schema: SCHEMA, username: user, run_id: runId });
+
+    if (url) {
+      try {
+        const resp = await fetch(`${url}/save-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username:       user,
+            canvas_json:    record.canvas_json || '',
+            ir_json:        record.ir_json || '',
+            pseudocode_txt: record.pseudocode_txt || '',
+            qiskit_py:      record.qiskit_py || '',
+            results:        record.results || null,
+            backend:        record.backend || 'unknown',
+            shots:          record.shots || 0,
+            run_id:         runId,
+            record:         full,
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          return { mode: 'backend', path: data.path, run_id: data.run_id, username: data.username };
+        }
+        // fall through to download on non-OK
+      } catch (_) { /* backend unreachable — fall through */ }
+    }
+    // Fallback: repo-shaped download the user drops in and commits themselves.
+    const dl = download(full, { repoPath: true });
+    return { mode: 'download', path: `logs/${user}/${runId}/run.json`, file: dl.name,
+             run_id: runId, username: user };
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   //  UI
   // ══════════════════════════════════════════════════════════════════════
@@ -153,14 +203,15 @@
     const top   = topState(currentRun.results);
     host.style.display = 'block';
     host.innerHTML = `
-      <div class="qc-save-head">Keep a personal copy of this run</div>
+      <div class="qc-save-head">Save this run</div>
       <div class="qc-save-sub">${esc(currentRun.title || 'Untitled circuit')}
         · ${esc(currentRun.backend)} · ${currentRun.shots} shots${top ? ` · top |${esc(top.state)}⟩ ${top.pct}%` : ''}</div>
       <div class="qc-save-user">
-        <label class="qc-lbl" for="qc-username">Label (optional)</label>
+        <label class="qc-lbl" for="qc-username">Username</label>
         <input class="qc-input" id="qc-username" type="text" placeholder="anonymous"
                value="${esc(prefs.username)}"
                oninput="QCLogger.setUsername(this.value)">
+        <span class="qc-user-hint">→ logs/<b id="qc-user-preview">${esc(sanitiseUsername(prefs.username))}</b>/</span>
       </div>
       <div class="qc-save-opts">
         <button class="qc-opt qc-opt-a" onclick="QCLogger.saveCurrent('local')">
@@ -171,12 +222,17 @@
           <span class="qc-opt-key">B</span>
           <span class="qc-opt-txt"><b>Download file</b><small>.json to your device</small></span>
         </button>
+        <button class="qc-opt qc-opt-c" onclick="QCLogger.saveCurrent('github')">
+          <span class="qc-opt-key">C</span>
+          <span class="qc-opt-txt"><b>GitHub repo</b><small>logs/&lt;username&gt;/ · no login</small></span>
+        </button>
       </div>
       <div class="qc-save-foot">
         <label class="qc-default-lbl">Default:
           <select class="qc-default-sel" onchange="QCLogger.setDefault(this.value)">
             <option value="local"    ${prefs.defaultOption === 'local'    ? 'selected' : ''}>A · Browser</option>
             <option value="download" ${prefs.defaultOption === 'download' ? 'selected' : ''}>B · Download</option>
+            <option value="github"   ${prefs.defaultOption === 'github'   ? 'selected' : ''}>C · GitHub</option>
           </select>
         </label>
         <button class="qc-browse-btn" onclick="QCLogger.openPanel()">🗂 View saved logs</button>
@@ -184,7 +240,11 @@
       <div class="qc-save-status" id="qc-save-status"></div>`;
   }
 
-  function setUsername(val) { setPrefs({ username: val }); }
+  function setUsername(val) {
+    setPrefs({ username: val });
+    const el = document.getElementById('qc-user-preview');
+    if (el) el.textContent = sanitiseUsername(val);
+  }
   function setDefault(val) { setPrefs({ defaultOption: val }); }
 
   function saveStatus(msg, kind) {
@@ -204,6 +264,16 @@
       } else if (option === 'download') {
         const r = download(currentRun);
         saveStatus(`✓ Downloaded <span class="qc-mono">${esc(r.name)}</span>`, 'ok');
+      } else if (option === 'github') {
+        saveStatus('… saving to repo', '');
+        const r = await saveGitHub(currentRun, user);
+        if (r.mode === 'backend') {
+          saveStatus(`✓ Written to <span class="qc-mono">${esc(r.path)}</span> — `
+            + `now <span class="qc-mono">git add logs/ &amp;&amp; git commit &amp;&amp; git push</span>`, 'ok');
+        } else {
+          saveStatus(`✓ Downloaded <span class="qc-mono">${esc(r.file)}</span> — `
+            + `commit it to <span class="qc-mono">${esc(r.path)}</span>`, 'ok');
+        }
       }
     } catch (e) {
       saveStatus(`✖ ${esc(e.message || e)}`, 'err');
@@ -240,6 +310,7 @@
         </div>
         <div class="qc-log-actions">
           <button class="qc-mini" title="Download" onclick="QCLogger.downloadLocal('${esc(r.id)}')">⭳</button>
+          <button class="qc-mini" title="Push to repo" onclick="QCLogger.githubLocal('${esc(r.id)}')">⬆</button>
           <button class="qc-mini qc-mini-danger" title="Delete" onclick="QCLogger.removeLocal('${esc(r.id)}')">✕</button>
         </div>
       </div>`).join('')
@@ -264,6 +335,15 @@
     if (!rec) { toast('Run not found', 'error'); return; }
     download(rec);
   }
+  async function githubLocal(id) {
+    const rec = getLocal(id);
+    if (!rec) { toast('Run not found', 'error'); return; }
+    const user = sanitiseUsername(rec.username || getPrefs().username);
+    const r = await saveGitHub(rec, user);
+    toast(r.mode === 'backend'
+      ? `✓ Written to ${r.path}`
+      : `✓ Downloaded — commit to ${r.path}`, 'ok');
+  }
   function removeLocal(id) {
     deleteLocal(id);
     renderPanel();
@@ -280,7 +360,7 @@
     onRunComplete, renderInline,
     saveCurrent, setUsername, setDefault,
     saveLocal, listLocal, getLocal, deleteLocal, clearAllLocal,
-    download, sanitiseUsername, getPrefs, setPrefs,
-    openPanel, closePanel, downloadLocal, removeLocal, clearAll,
+    download, saveGitHub, sanitiseUsername, getPrefs, setPrefs,
+    openPanel, closePanel, downloadLocal, githubLocal, removeLocal, clearAll,
   };
 })();

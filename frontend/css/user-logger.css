@@ -1,7 +1,6 @@
 /* QuantumCanvas — User Logger styles
-   Two personal-copy save options (A browser · B download) + saved-logs
-   browser, plus the explicit "Save current state" circuit-log control.
-   Reuses the palette from main.css (:root vars). */
+   Three save options (A browser · B download · C GitHub repo) + saved-logs
+   browser. Reuses the palette from main.css (:root vars). */
 
 /* Topbar "Logs" button */
 .logs-btn {
@@ -60,6 +59,8 @@
 .qc-opt-a:hover .qc-opt-key { background: var(--teal2); color: var(--teal); }
 .qc-opt-b:hover { border-color: var(--amber); }
 .qc-opt-b:hover .qc-opt-key { background: var(--amber2); color: var(--amber); }
+.qc-opt-c:hover { border-color: var(--violet); }
+.qc-opt-c:hover .qc-opt-key { background: var(--violet2); color: var(--violet); }
 
 .qc-save-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .qc-default-lbl {
@@ -150,23 +151,3 @@
 @media (max-width: 520px) {
   .qc-save-opts { flex-direction: column; }
 }
-
-/* ── Explicit "💾 Save current state" control (circuit-level log) ── */
-.exec-state-save {
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-}
-.exec-save-state-btn {
-  padding: 6px 14px; border-radius: 6px;
-  border: 1px solid var(--violet); background: var(--violet2);
-  color: var(--violet); font-family: 'DM Sans', sans-serif; font-size: .74rem;
-  font-weight: 500; cursor: pointer; transition: all .15s; letter-spacing: .02em;
-}
-.exec-save-state-btn:hover    { background: rgba(155,109,255,.2); }
-.exec-save-state-btn:disabled { opacity: .5; cursor: default; }
-.exec-save-status {
-  font-family: 'Space Mono', monospace; font-size: .62rem; color: var(--gray);
-  word-break: break-word;
-}
-.exec-save-status.ok  { color: var(--teal); }
-.exec-save-status.err { color: var(--rose); }

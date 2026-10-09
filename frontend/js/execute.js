@@ -10,67 +10,18 @@ const BACKEND_URL =
     ? 'http://localhost:8000'
     : 'https://quantumcanvas-backend-f6hphzcrejgjbha8.centralus-01.azurewebsites.net';
 
-// The server puts a plain-language reason in {"detail": "..."}; show just that (never raw JSON).
-function _backendDetail(status, text) {
-  try {
-    const d = JSON.parse(text).detail;
-    if (typeof d === 'string') return status < 500 ? d : `Something went wrong on the server. ${d}`;
-  } catch (_) {}
-  return status < 500 ? `The server could not run this (error ${status}).`
-                      : `Something went wrong on the server (error ${status}). Try again, or use the Aer simulator.`;
-}
-// fetch() throws a TypeError when the server can't be reached at all (offline, or still waking up).
-function _friendlyError(e) {
-  return (e instanceof TypeError)
-    ? "Couldn't reach the QuantumCanvas server. It may be waking up: wait about 30 seconds and try again."
-    : e.message;
-}
-
-// Which backends this server can actually run (asked once per page). Unknown = leave buttons enabled.
-const QC_AVAILABLE = { ionq: true, qpu: true, checked: false };
-async function _checkAvailability() {
-  if (QC_AVAILABLE.checked) return QC_AVAILABLE;
-  try {
-    const r = await fetch(`${BACKEND_URL}/health`);
-    if (r.ok) {
-      const h = await r.json();
-      if (h.ionq_configured === false) { QC_AVAILABLE.ionq = false; QC_AVAILABLE.qpu = false; }
-      if (h.qpu_enabled === false) QC_AVAILABLE.qpu = false;
-      QC_AVAILABLE.checked = true;
-    }
-  } catch (_) { /* server asleep or offline: the run itself will say so */ }
-  return QC_AVAILABLE;
-}
-function _applyAvailability() {
-  const off = (id, why) => { const b = document.getElementById(id); if (b) { b.disabled = true; b.title = why; } };
-  if (!QC_AVAILABLE.ionq) off('exec-run-ionq', "IonQ isn't set up on this server right now. Use the Aer simulator.");
-  if (!QC_AVAILABLE.qpu) off('exec-run-hw', 'Real hardware is switched off on this server. Use the Aer simulator.');
-}
-
-// One id per browser tab, sent with every run so records from the same sitting can be grouped (no personal data).
-const QC_SESSION_ID = (() => {
-  try { const k = sessionStorage.getItem('qc_session'); if (k) return k; } catch (_) {}
-  const id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 's' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-  try { sessionStorage.setItem('qc_session', id); } catch (_) {}
-  return id;
-})();
-
 // ── Panel state ───────────────────────────────────────────────────────
 const execState = {
-  shots:            1000,
-  jobId:            null,
-  polling:          null,
-  pipelineStep:     0,
-  simResults:       null,   // stored after simulator run for comparison
-  runId:            null,
-  lastSavedIrJson:  null,   // ir_json string last confirmed saved to logs/runs/
-  lastSavedInfo:    null,   // {circuit_hash, run_id, path, ...} from that save
+  shots:        1000,
+  jobId:        null,
+  polling:      null,
+  pipelineStep: 0,
+  simResults:   null,   // stored after simulator run for comparison
+  runId:        null,
 };
 
 // ── Open / close ──────────────────────────────────────────────────────
 function openExecutePanel() {
-  if (window.QCConcepts && QCConcepts.active()) { QCConcepts.openExecute(); return; }
-  const _ep = document.getElementById('exec-panel'); if (_ep) _ep._concept = null;
   const ir = extractCanvasIR(state);
   validateIR(ir);
   if(!ir.validation.ok) { toast('Fix validation errors before executing', 'error'); return; }
@@ -78,7 +29,6 @@ function openExecutePanel() {
   const qiskit = generateQiskit(ir, doc);
   _renderExecPanel(ir, doc, qiskit);
   document.getElementById('exec-overlay').classList.add('open');
-  _checkAvailability().then(_applyAvailability);
 }
 function closeExecutePanel() {
   if(execState.polling) { clearInterval(execState.polling); execState.polling = null; }
@@ -123,15 +73,6 @@ function _renderExecPanel(ir, doc, qiskit) {
     <span class="exec-config-label" style="margin-left:8px;opacity:.5">(max 10,000)</span>
   </div>
 
-  <!-- Explicit "save current state" — snapshots IR/pseudocode/Qiskit to
-       logs/runs/<circuit_hash>/ on your own timing, before any execution.
-       Execute also auto-saves first if this hasn't happened yet. -->
-  <div class="exec-state-save">
-    <button class="exec-save-state-btn" id="exec-save-state-btn"
-            onclick="saveCurrentState()">💾 Save current state</button>
-    <span class="exec-save-status" id="exec-save-status">Not saved yet — Execute will auto-save first.</span>
-  </div>
-
   <!-- Simulator results -->
   <div class="exec-results" id="exec-results">
     <div class="exec-results-head" id="exec-results-head">Simulator Results</div>
@@ -172,8 +113,6 @@ function _renderExecPanel(ir, doc, qiskit) {
     <p class="exec-log-line">Ready — choose a backend to execute.</p>
   </div>
 
-  <div id="exec-explain" class="exec-explain" style="display:none"></div>
-
   <div class="exec-footer">
     <button class="exec-run-sim-btn" id="exec-run-aer"
             onclick="execRunSimulator('aer')">⚡ Aer Simulator</button>
@@ -181,19 +120,9 @@ function _renderExecPanel(ir, doc, qiskit) {
             onclick="execRunSimulator('ionq')">⚡ IonQ Simulator</button>
     <button class="exec-run-hw-btn" id="exec-run-hw"
             onclick="execRunHardware()">🖥 IonQ Hardware</button>
-    <button class="exec-run-sim-btn" id="exec-explain-btn" onclick="execExplain()" disabled
-            title="Run something first, then ask for an explanation checked against the simulation">💬 Explain</button>
     <button class="exec-cancel-btn" onclick="closeExecutePanel()">Close</button>
-    <span class="exec-save-note">Not sure? Use <b>Aer Simulator</b>: free, instant, exact.</span>
+    <span class="exec-save-note">Artifacts saved to logs/</span>
   </div>`;
-
-  // Reflect whether this exact circuit was already saved in an earlier
-  // panel session (lastSavedIrJson persists across opens/closes) —
-  // comparing the raw ir_json string is enough to know "unchanged since
-  // last save", no need to recompute anything server-side just to check.
-  if (execState.lastSavedIrJson === (panel._concept ? JSON.stringify(panel._concept) : JSON.stringify(ir))) {
-    _setSaveStatus(`✓ already saved — logs/runs/${execState.lastSavedInfo?.run_id}/`, 'ok');
-  }
 }
 
 // ── Capture a run record for the user-logger (A/B/C save options) ─────
@@ -206,7 +135,6 @@ function _recordLastRun(counts, runId, kind, raw) {
     const payload = _buildPayload(backend);
     execState.lastRun = {
       schema:         'quantumcanvas.run/v1',
-      record_id:      execState.lastRecordId || null,   // the server-side v2 record (full audit trail)
       run_id:         runId || null,
       title:          panel?._doc?.title || 'Untitled circuit',
       backend:        payload.backend,
@@ -241,73 +169,13 @@ function _buildPayload(backend) {
   return {
     canvas_json:    JSON.stringify({ qubits: state.qubits.map(q=>({
                       id:q.id, label:q.label, state:q.state, ops:q.ops, result:q.result
-                    })), edges: state.edges,
-                    // concept steps, so the run can be reopened (File → Open run in Concepts mode)
-                    ...(panel._concept && window.QCConcepts ? { concepts: QCConcepts.snapshot() } : {}) }),
-    ir_json:        panel._concept ? JSON.stringify(panel._concept) : JSON.stringify(ir),
+                    })), edges: state.edges }),
+    ir_json:        JSON.stringify(ir),
     pseudocode_txt: _buildPseudocodeText(doc),
     qiskit_py:      qiskitCode,
     backend,
     shots,
-    session_id: QC_SESSION_ID,
-    // Concept circuits are compiled on the server from this document (no exec() of the text above)
-    ...(panel._concept ? { concept_ir: panel._concept } : {}),
   };
-}
-
-// ── Save current state (explicit button + automatic-before-execute) ───
-// Tracks the exact ir_json string last confirmed saved to logs/runs/. Simple
-// string equality is enough to know "unchanged since last save" — the
-// backend is the one that computes the real circuit hash used as the folder
-// name, so the frontend doesn't need to replicate that, just detect "did the
-// circuit change since I last saved it".
-async function _ensureSaved(payload) {
-  if (payload.ir_json === execState.lastSavedIrJson) {
-    return execState.lastSavedInfo;   // unchanged since last save — skip
-  }
-  const resp = await fetch(`${BACKEND_URL}/log-circuit`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      canvas_json:    payload.canvas_json,
-      ir_json:        payload.ir_json,
-      pseudocode_txt: payload.pseudocode_txt,
-      qiskit_py:      payload.qiskit_py,
-    }),
-  });
-  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
-  const data = await resp.json();
-  execState.lastSavedIrJson = payload.ir_json;
-  execState.lastSavedInfo   = data;
-  return data;
-}
-
-// ── Explicit "💾 Save current state" button ────────────────────────────
-async function saveCurrentState() {
-  const panel = document.getElementById('exec-panel');
-  if (!panel?._ir) { execLog('Nothing to save yet.', 'warn'); return; }
-  const btn = document.getElementById('exec-save-state-btn');
-  if (btn) btn.disabled = true;
-  _setSaveStatus('… saving', '');
-  try {
-    const payload = _buildPayload('snapshot');   // backend field unused by /log-circuit
-    const data    = await _ensureSaved(payload);
-    const note    = data.already_saved
-      ? `already saved — logs/runs/${data.run_id}/ (no changes)`
-      : `saved — logs/runs/${data.run_id}/`;
-    execLog(`💾 Circuit ${note}`, 'ok');
-    _setSaveStatus(`✓ logs/runs/${data.run_id}/`, 'ok');
-  } catch (e) {
-    execLog(`✖ Save failed: ${_friendlyError(e)}`, 'err');
-    _setSaveStatus(`✖ ${_friendlyError(e)}`, 'err');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-function _setSaveStatus(msg, cls) {
-  const el = document.getElementById('exec-save-status');
-  if (el) { el.textContent = msg; el.className = `exec-save-status ${cls||''}`; }
 }
 
 // ── Enable/disable all run buttons together ───────────────────────────
@@ -316,7 +184,6 @@ function _setRunButtonsDisabled(disabled) {
     const b = document.getElementById(id);
     if(b) b.disabled = disabled;
   });
-  if (!disabled) _applyAvailability();
 }
 
 // ── Run a simulator backend ('aer' or 'ionq') — no cost, straight to results
@@ -335,18 +202,14 @@ async function execRunSimulator(backend) {
   _setPipeStep(2);
 
   try {
-    const payload = _buildPayload(backend);
-    await _ensureSaved(payload);   // auto-saves circuit state first if it hasn't been yet
     const resp = await fetch(`${BACKEND_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(_buildPayload(backend)),
     });
-    if(!resp.ok) throw new Error(_backendDetail(resp.status, await resp.text()));
+    if(!resp.ok) throw new Error(`Backend ${resp.status}: ${await resp.text()}`);
     const data = await resp.json();
 
-    execState.lastRecordId = data.record_id || null;
-    _showRunInfo(data);
     if(data.counts) {
       // Aer returns synchronously
       _setPipeStep(4);
@@ -362,7 +225,7 @@ async function execRunSimulator(backend) {
     }
   } catch(e) {
     _setPipeStep(5);
-    execLog(`✖ ${_friendlyError(e)}`, 'err');
+    execLog(`✖ ${e.message}`, 'err');
     _setRunButtonsDisabled(false);
   }
 }
@@ -382,12 +245,9 @@ async function execRunHardware() {
 // ── Poll simulator job ────────────────────────────────────────────────
 function _pollSimJob(jobId) {
   let attempts = 0;
-  // Large circuits (20+ qubits) can take well over 3 minutes on IonQ's cloud
-  // simulator - 60 attempts x 3s was giving up before those jobs ever finished.
-  const maxAttempts = 200; // 10 minutes
   execState.polling = setInterval(async () => {
     attempts++;
-    if(attempts > maxAttempts) {
+    if(attempts > 60) {
       clearInterval(execState.polling); execState.polling = null;
       execLog('✖ Timeout waiting for simulator result', 'err');
       _setPipeStep(5);
@@ -403,7 +263,6 @@ function _pollSimJob(jobId) {
       // 'submitted' are intermediate - keep polling through them.
       if(data.status === 'completed') {
         clearInterval(execState.polling); execState.polling = null;
-        _showRunInfo(data);
         _setPipeStep(4);
         _onSimResults(data.counts, data.run_id || execState.runId);
       } else if(data.status === 'failed' || data.status === 'canceled' || data.status === 'cancelled') {
@@ -414,70 +273,6 @@ function _pollSimJob(jobId) {
       }
     } catch(e) { execLog(`  Poll error: ${e.message}`, 'warn'); }
   }, 3000);
-}
-
-// ── Explain this run: verified template always; AI text only if it passed the claim checker ──
-async function execExplain() {
-  const id = execState.lastRecordId;
-  const box = document.getElementById('exec-explain');
-  if (!id) { if (typeof toast === 'function') toast('Run the circuit first', 'warn'); return; }
-  box.style.display = 'block';
-  box.innerHTML = '<div class="ex-note">Checking the explanation against the simulation…</div>';
-  const btn = document.getElementById('exec-explain-btn'); if (btn) btn.disabled = true;
-  try {
-    const labels = (typeof state !== 'undefined') ? state.qubits.map(q => q.label) : [];
-    const resp = await fetch(`${BACKEND_URL}/explain`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ record_id: id, labels, use_llm: true }) });
-    if (!resp.ok) throw new Error(_backendDetail(resp.status, await resp.text()));
-    box.innerHTML = _renderExplanation(await resp.json());
-  } catch (e) {
-    box.innerHTML = `<div class="ex-note err">Could not get an explanation: ${_h(_friendlyError(e))}</div>`;
-  } finally { if (btn) btn.disabled = false; }
-}
-
-function _renderExplanation(r) {
-  const L = r.llm || {}, T = r.template;
-  const stepRows = (steps, lookup) => steps.map(s => {
-    const t = lookup ? lookup[s.id] : s.text;
-    return `<div class="ex-step ${s.claim_ok === false ? 'warn' : ''}"><b>${_h(s.title || s.id)}</b> ${_h(t || '')}</div>`;
-  }).join('');
-  let h = '';
-  if (L.status === 'ok' && L.text) {
-    const by = Object.fromEntries((L.text.steps || []).map(s => [s.id, s.text]));
-    h += `<div class="ex-ai"><span class="ex-badge">${_h(L.label)}</span>${L.cache_hit ? ' <i>(cached)</i>' : ''}
-          ${L.fallback_used ? ' <i>(backup provider)</i>' : ''}<p>${_h(L.text.summary || '')}</p>${stepRows(T.steps, by)}
-          <div class="ex-fine">Every number and direction in this text was checked against the exact simulation.</div></div>
-          <details class="ex-tmpl"><summary>Verified explanation (no AI)</summary><p>${_h(T.summary)}</p>${stepRows(T.steps)}</details>`;
-  } else {
-    h += `<div class="ex-tmpl-open"><span class="ex-badge plain">Verified explanation</span><p>${_h(T.summary)}</p>${stepRows(T.steps)}</div>`;
-    const why = { rejected: 'An AI explanation was written, but it said something the simulation contradicts, so it was thrown away. This is the verified explanation instead.',
-                  unavailable: 'The AI explanation is unavailable right now (provider limit or outage). This is the verified explanation.',
-                  budget: 'Today\'s AI explanation allowance is used up. This is the verified explanation.' }[L.status];
-    if (why) h += `<div class="ex-note">${_h(why)}</div>`;
-    const errs = (L.attempts || []).filter(a => a.error).map(a => `${a.provider || ''}: ${a.error}`);
-    if (errs.length) h += `<div class="ex-note err"><b>Why:</b> ${_h(errs.join(' | '))}</div>`;
-  }
-  if (r.save_error) h += `<div class="ex-note err">${_h(r.save_error)}</div>`;
-  return h;
-}
-
-// ── What the run record and the math layer found (never silent: a failed save or a broken check is shown) ──
-function _showRunInfo(data) {
-  if (!data) return;
-  const names = ids => (ids || []).map(i => (window.QCConcepts ? QCConcepts.labelize(i) : i)).join(', ');
-  if (data.save_error) { execLog(`✖ ${data.save_error}`, 'err'); if (typeof toast === 'function') toast('Run record NOT saved — see the log', 'error'); }
-  (data.flags || []).forEach(f => execLog(`⚠ ${f.flag}: ${f.detail}`, 'warn'));
-  const m = data.math;
-  if (m && m.ran) {
-    const failedCode = (m.failed_checks || []).filter(c => /code|parsed/.test(c));
-    if (failedCode.length) execLog(`✖ Math check: the code that ran does not match the circuit (${failedCode.join('; ')})`, 'err');
-    else execLog('✓ Math check: the emitted code matches the circuit, step by step', 'ok');
-    if (m.result_check) execLog(`${m.result_check.ok === false ? '✖' : '✓'} Math check: observed counts vs exact prediction — ${m.result_check.detail || ''}`, m.result_check.ok === false ? 'err' : 'ok');
-    if ((m.broken_contract_steps || []).length) execLog(`⚠ ${m.broken_contract_steps.length} step(s) did not do what their explanation says: ${m.broken_contract_steps.join(', ')} (see the Steps list)`, 'warn');
-    if ((m.idle_steps || []).length) execLog(`⚠ ${m.idle_steps.length} step(s) don't change what you measured: ${m.idle_steps.join(', ')}`, 'warn');
-  }
-  if (data.record_id) { const b = document.getElementById('exec-explain-btn'); if (b) b.disabled = false; }
-  if (data.record_id) execLog(`🗂 Run record ${data.record_id} · GET ${BACKEND_URL}/runs/${data.record_id}`);
 }
 
 // ── Simulator results → show visually ────────────────────────────────
@@ -500,9 +295,9 @@ function _onSimResults(counts, runId) {
     document.getElementById('exec-bars').innerHTML =
       `<div style="opacity:.75;font-size:.72rem;padding:6px 0">`
       + `${label} returned no counts. Backend responded but the histogram was empty — `
-      + `check logs/runs/${runId || '…'}/ionq_results_raw.json for the raw IonQ response.</div>`;
+      + `check logs/${runId || '…'}/ionq_results_raw.json for the raw IonQ response.</div>`;
     execLog(`⚠ ${label} simulator returned no counts (empty histogram).`, 'warn');
-    if(runId) execLog(`  See logs/runs/${runId}/ionq_results_raw.json`);
+    if(runId) execLog(`  See logs/${runId}/ionq_results_raw.json`);
     _setRunButtonsDisabled(false);
     return;
   }
@@ -511,7 +306,7 @@ function _onSimResults(counts, runId) {
   const top = Object.entries(clean).sort((a,b)=>b[1]-a[1])[0];
   const topPct = top ? (top[1]/total*100).toFixed(1) : '?';
   execLog(`✓ ${label} simulator done — ${total} shots · top: |${top?.[0]}⟩ (${topPct}%)`, 'ok');
-  if(runId) execLog(`  Artifacts saved to logs/runs/${runId}/`);
+  if(runId) execLog(`  Artifacts saved to logs/${runId}/`);
 
   _recordLastRun(counts, runId, 'sim');
   _setRunButtonsDisabled(false);
@@ -611,14 +406,13 @@ async function execRunQPU() {
   execLog(`⚡ Submitting REAL hardware job → POST ${BACKEND_URL}/execute (backend=qpu, shots=${shots})`, 'ok');
 
   try {
-    await _ensureSaved(payload);   // auto-saves circuit state first if it hasn't been yet
     const resp = await fetch(`${BACKEND_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     const text = await resp.text();                    // read once, keep body for errors
-    if(!resp.ok) throw new Error(_backendDetail(resp.status, text));
+    if(!resp.ok) throw new Error(`Backend ${resp.status}: ${text}`);
     const data = JSON.parse(text);
 
     if(data.job_id) {
@@ -630,7 +424,7 @@ async function execRunQPU() {
     }
   } catch(e) {
     // e.message now carries IonQ's real reason (e.g. insufficient credits / access)
-    execLog(`✖ Hardware submit rejected: ${_friendlyError(e)}`, 'err');
+    execLog(`✖ Hardware submit rejected: ${e.message}`, 'err');
     document.getElementById('exec-qpu-confirm').disabled = false;
     document.getElementById('exec-qpu-cancel').disabled  = false;
   }
@@ -704,7 +498,7 @@ function _onQPUResults(counts, runId, raw) {
       + _rawBlock('IonQ hardware job', raw));
   }
 
-  if(runId) execLog(`  QPU artifacts saved to logs/runs/${runId}/`);
+  if(runId) execLog(`  QPU artifacts saved to logs/${runId}/`);
   _recordLastRun(counts, runId, 'qpu', raw);
   document.getElementById('exec-qpu-card').style.display = 'none';
 }

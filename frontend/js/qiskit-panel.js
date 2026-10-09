@@ -6,7 +6,6 @@
 function pcQiskit(){
   const ir = window._pcLastIR;
   if(!ir||!ir.validation.ok){ toast('Fix errors first','error'); return; }
-  if(ir._concept){ _renderQiskitPanel(ir, QCConcepts.docFor(ir._concept), QCConcepts.qiskitFor(ir._concept)); return; }
   const doc    = generatePseudocode(ir);
   const qiskit = generateQiskit(ir, doc);
   _renderQiskitPanel(ir, doc, qiskit);
@@ -43,16 +42,12 @@ function _renderQiskitPanel(ir, doc, qiskit){
   <div class="qk-code-wrap">
     <div class="qk-toolbar">
       <span class="qk-lang-badge">Python · Qiskit</span>
-      <div class="qk-toolbar-actions">
-        <button class="qk-copy-btn" onclick="qkCopy()">Copy</button>
-        <button class="qk-qasm-btn" onclick="qkCopyQasm()"
-                title="Paste into IBM Quantum Composer's code editor to see it rendered visually">Copy as QASM</button>
-      </div>
+      <button class="qk-copy-btn" onclick="qkCopy()">Copy</button>
     </div>
     <pre class="qk-pre" id="${copyId}">${buildHighlightedCode(qiskit)}</pre>
   </div>
 
-  ${ir._concept ? '' : `<div class="qk-map-section">
+  <div class="qk-map-section">
     <div class="qk-map-head">QuantumCanvas → Qiskit mapping</div>
     <table class="qk-map-tbl">
       <thead><tr><th>Canvas primitive</th><th>Qiskit gate(s)</th><th>Status</th></tr></thead>
@@ -60,11 +55,11 @@ function _renderQiskitPanel(ir, doc, qiskit){
         <tr><td>◎ SHAKE</td><td><code>qc.h(q)</code></td><td class="qk-impl">✓ Implemented</td></tr>
         <tr><td>◈ MARK</td><td><code>qc.z(q)</code></td><td class="qk-impl">✓ Implemented</td></tr>
         <tr><td>▲ BOOST</td><td><code>H · X · CZ · X · H</code> (diffusion)</td><td class="qk-impl">✓ Implemented</td></tr>
-        <tr><td>⋈ ENTANGLE</td><td><code>qc.cx(ctrl, tgt)</code></td><td class="qk-impl">✓ Implemented</td></tr>
-        <tr><td>◙ MEASURE</td><td><code>qc.measure(q, c)</code></td><td class="qk-impl">✓ Implemented</td></tr>
+        <tr><td>⋈ LINK</td><td><code>qc.cx(ctrl, tgt)</code></td><td class="qk-impl">✓ Implemented</td></tr>
+        <tr><td>◙ LOOK</td><td><code>qc.measure(q, c)</code></td><td class="qk-impl">✓ Implemented</td></tr>
       </tbody>
     </table>
-  </div>`}
+  </div>
 
   <div class="pc-footer">
     <button class="pc-qiskit-btn" onclick="qkBackToPseudocode()">← Pseudocode</button>
@@ -77,21 +72,38 @@ function _renderQiskitPanel(ir, doc, qiskit){
 }
 
 function buildHighlightedCode(qiskit){
-  // One pass over each (HTML-escaped) line: comments, strings, keywords, class names, gate methods, numbers.
-  // (The previous chain of replace() calls re-matched the class="..." text it had just inserted.)
-  const re = /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|\b(from|import|for|in|print|with|as)\b|\b(QuantumCircuit|AerSimulator|transpile|np)\b|\.(h|x|y|z|s|sdg|t|tdg|p|rx|ry|rz|cx|cy|cz|ch|ccx|cswap|crx|cry|crz|cp|mcx|mcp|swap|measure|measure_all|reset|append|if_test|draw|run|result|get_counts)(?=\()|\b(\d+(?:\.\d+)?)\b/g;
+  // Simple syntax highlighting via HTML spans (no external lib)
+  const keywords = /\b(from|import|for|in|if|print|def|return)\b/g;
+  const builtins = /\b(QuantumCircuit|AerSimulator|transpile|sorted)\b/g;
+  const methods  = /\.(h|x|z|cx|cz|ccx|measure|draw|run|result|get_counts)\(/g;
+  const strings  = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
+  const numbers  = /\b(\d+)\b/g;
+  const comments = /(#[^\n]*)/g;
+
   return qiskit.lines.map((line, i) => {
     if(!line) return '';
     const remark = qiskit.remarks[i];
+    // Attach inline remark as a comment if the line itself isn't a comment
     const full = (remark && !line.startsWith('#')) ? `${line}  # ${remark}` : line;
-    const esc = full.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    return esc.replace(re, (m, c, str, kw, bi, fn, num) =>
-      c   ? `<span class="qk-c">${c}</span>`  :
-      str ? `<span class="qk-s">${str}</span>` :
-      kw  ? `<span class="qk-kw">${kw}</span>` :
-      bi  ? `<span class="qk-bi">${bi}</span>` :
-      fn  ? `.<span class="qk-fn">${fn}</span>` :
-            `<span class="qk-n">${num}</span>`);
+
+    // Escape HTML first, then inject spans
+    let s = full
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    // Comments first (they swallow everything after #)
+    s = s.replace(/(#[^<]*)/g, '<span class="qk-c">$1</span>');
+
+    // Only style non-comment parts (crude but sufficient for display)
+    if(!line.startsWith('#')){
+      s = s
+        .replace(/\b(from|import|for|in|print)\b/g, '<span class="qk-kw">$1</span>')
+        .replace(/\b(QuantumCircuit|AerSimulator|transpile)\b/g, '<span class="qk-bi">$1</span>')
+        .replace(/\.(h|x|z|cx|cz|ccx|measure|draw|run|result|get_counts)\(/g,
+                 '.<span class="qk-fn">$1</span>(')
+        .replace(/("(?:[^"<>])*"|'(?:[^'<>])*')/g, '<span class="qk-s">$1</span>')
+        .replace(/\b(\d+)\b(?![^<]*<\/span>)/g, '<span class="qk-n">$1</span>');
+    }
+    return s;
   }).join('\n');
 }
 
@@ -109,42 +121,6 @@ function qkCopy(){
     document.body.removeChild(ta);
     const btn = document.querySelector('.qk-copy-btn');
     if(btn){ btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy', 1800); }
-  });
-}
-
-async function qkCopyQasm(){
-  const panel = document.getElementById('pc-panel');
-  const code  = panel._qkCode || '';
-  const btn   = document.querySelector('.qk-qasm-btn');
-  if(!code){ toast('Nothing to export yet','error'); return; }
-
-  if(btn){ btn.disabled = true; btn.textContent = 'Exporting…'; }
-  try{
-    const resp = await fetch(`${BACKEND_URL}/qasm`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ qiskit_py: code }),
-    });
-    const data = await resp.json();
-    if(!resp.ok || !data.qasm) throw new Error(data.error || data.detail || `${resp.status}`);
-
-    await _copyText(data.qasm);
-    if(btn){ btn.textContent = 'Copied!'; }
-    toast('QASM copied — paste into IBM Quantum Composer\'s code editor to see it visually', 'valid');
-  } catch(e){
-    toast(`QASM export failed: ${e.message}`, 'error');
-    if(btn){ btn.textContent = 'Copy as QASM'; }
-  } finally {
-    if(btn){ btn.disabled = false; setTimeout(()=>{ btn.textContent = 'Copy as QASM'; }, 1800); }
-  }
-}
-
-function _copyText(text){
-  return navigator.clipboard.writeText(text).catch(()=>{
-    const ta = document.createElement('textarea');
-    ta.value = text; document.body.appendChild(ta);
-    ta.select(); document.execCommand('copy');
-    document.body.removeChild(ta);
   });
 }
 
@@ -180,7 +156,7 @@ function _renderPC(ir,doc){
   </div>`;
 
   // raw execution timeline
-  const tlOps = { shake:'Shake', mark:'Mark', boost:'Boost', link:'Entangle', look:'Measure' };
+  const tlOps = { shake:'Shake', mark:'Mark', boost:'Boost', link:'Link', look:'Look' };
   const tlDetails = entry => {
     const q = ir.qubits.find(q=>q.id===entry.qubit);
     const lbl = q?.label || entry.qubit;
@@ -237,12 +213,11 @@ function _renderPC(ir,doc){
       h+=`<div class="pc-step">
         <div class="pc-stripe ${sc}"></div>
         <div class="pc-step-body">
-          <div class="pc-step-num">Step ${step.n} · ${step.op}${(step.id&&ir._concept)?`<button class="pc-ask" title="Explain this step, with the maths" onclick="QCMath.ask('${_h(step.id)}', this)">?</button>`:''}</div>
+          <div class="pc-step-num">Step ${step.n} · ${step.op}</div>
           <div class="pc-step-code">${_h(step.code)}</div>
           <div class="pc-step-plain">${_h(step.plain)}</div>
           <button class="pc-qnote-btn" onclick="pcQnote(this)">[ quantum ▸ ]</button>
           <div class="pc-qnote">${_h(step.qnote)}</div>
-          <div class="pc-ask-box"></div>
         </div>
       </div>`;
     });
@@ -290,6 +265,4 @@ function _renderPC(ir,doc){
   </div>`;
 
   panel.innerHTML=h;
-  window._pcLastDocSteps = doc ? doc.steps : [];
-  if(window.QCMath){ if(ir._concept) QCMath.installTabs(ir._concept); else if(doc) QCMath.installClassic(ir); }
 }

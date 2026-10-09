@@ -46,8 +46,8 @@ function generatePseudocode(ir){
       addStep('SHAKE',tgts,
         `SHAKE [${tgts.join(', ')}]  →  spread ${tgtStr} into ${batchStates === 2 ? 'both possibilities' : `all ${batchStates} combinations`} equally`,
         tgts.length===1
-          ? `Shake puts ${tgts[0]} into superposition — it is now in an equal superposition of |0⟩ and |1⟩: measuring it gives 0 or 1 with a 50% chance each.`
-          : `Shake puts each of [${tgts.join(', ')}] into superposition. The state is now an equal superposition of all ${batchStates} combinations of these ${batchN} qubits, so each one has the same chance of being measured.`,
+          ? `Shake puts ${tgts[0]} into superposition — both |0⟩ and |1⟩ are simultaneously possible with equal probability. The qubit is no longer a definite 0 or 1.`
+          : `Shake puts each of [${tgts.join(', ')}] into superposition. All ${batchStates} combinations of these ${batchN} qubits now exist simultaneously with equal probability.`,
         qnNote);
     }
     else if(op==='mark'){
@@ -93,8 +93,8 @@ function generatePseudocode(ir){
         const sl=ir.qubits.find(q=>q.id===edge.src)?.label||edge.src;
         const tl=ir.qubits.find(q=>q.id===edge.tgt)?.label||edge.tgt;
         addStep('LINK',[sl,tl],
-          `ENTANGLE ${sl} → ${tl}  →  create quantum correlation (controlled operation)`,
-          `Entangling ${sl} and ${tl} creates a quantum correlation via a controlled-NOT gate. The measurement outcome of one qubit becomes correlated with the other. The exact entangled state depends on the state of ${sl} before this operation.`,
+          `LINK ${sl} → ${tl}  →  create quantum correlation (controlled operation)`,
+          `Linking ${sl} and ${tl} creates a quantum correlation via a controlled-NOT gate. The measurement outcome of one qubit becomes correlated with the other. The exact entangled state depends on the state of ${sl} before this operation.`,
           `CNOT gate: cx(${sl}, ${tl}) — entanglement type depends on prior state of control qubit`);
       });
     }
@@ -108,7 +108,7 @@ function generatePseudocode(ir){
         const dresults = directInBatch.map(b=>{ const q=ir.qubits.find(q=>q.id===b.qubit); return q?.result??'?'; });
         const dResStr  = directInBatch.map((b,ri)=>{ const l=ir.qubits.find(q=>q.id===b.qubit)?.label||b.qubit; return `${l}=${dresults[ri]}`; }).join(', ');
         addStep('LOOK',dtgts,
-          `MEASURE [${dtgts.join(', ')}]  →  collapse to a classical value`,
+          `LOOK [${dtgts.join(', ')}]  →  measure — collapse to a classical value`,
           `Measuring ${dtgts.join(' and ')} collapses the superposition to a definite 0 or 1. This is irreversible — ${dtgts.length>1?'these qubits become':'this qubit becomes'} classical. The outcome is probabilistic; the distribution depends on the circuit above.`,
           `Projective measurement ⟨x|ρ|x⟩. Result: ${dResStr}`);
       }
@@ -117,9 +117,9 @@ function generatePseudocode(ir){
         const cresults = correlatedInBatch.map(b=>{ const q=ir.qubits.find(q=>q.id===b.qubit); return q?.result??'?'; });
         const cResStr  = correlatedInBatch.map((b,ri)=>{ const l=ir.qubits.find(q=>q.id===b.qubit)?.label||b.qubit; return `${l}=${cresults[ri]}`; }).join(', ');
         addStep('LOOK',ctgts,
-          `MEASURE [${ctgts.join(', ')}]  →  correlated collapse (entanglement)`,
-          `${ctgts.join(' and ')} ${ctgts.length>1?'collapse':'collapses'} automatically because ${ctgts.length>1?'they were':'it was'} entangled with the measured qubit. No measurement was needed — the Entangle determined the outcome instantly.`,
-          `Entanglement collapse: measuring the entangled qubit forces this qubit to a correlated classical value`);
+          `LOOK [${ctgts.join(', ')}]  →  correlated collapse (entanglement)`,
+          `${ctgts.join(' and ')} ${ctgts.length>1?'collapse':'collapses'} automatically because ${ctgts.length>1?'they were':'it was'} entangled with the measured qubit. No measurement was needed — the Link determined the outcome instantly.`,
+          `Entanglement collapse: measuring the linked qubit forces this qubit to a correlated classical value`);
       }
     }
   }
@@ -135,7 +135,7 @@ function generatePseudocode(ir){
   };
   const patternNotes={
     grover_like:'This sequence follows the Grover search structure: initialize → equal superposition → phase marking → amplitude amplification → measurement.',
-    bell_pair:'One qubit shaken into superposition, then entangled with a second via a CNOT gate, creating a correlated entangled pair. If the control qubit was in equal superposition, this produces a Bell state.',
+    bell_pair:'One qubit shaken into superposition, then linked to a second via a CNOT gate, creating a correlated entangled pair. If the control qubit was in equal superposition, this produces a Bell state.',
     superposition_only:'All qubits are in equal superposition. No target marked. Useful for generating uniform random outcomes.',
     entangled_search:'Combines entanglement with amplitude amplification for a more complex search structure.',
     marked_no_boost:'A target is marked but Boost not applied. Phase is flipped but probabilities unchanged. Add Boost to amplify.',

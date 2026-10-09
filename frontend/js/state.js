@@ -69,7 +69,6 @@ function renderQubit(q){
   el.querySelector('.qlabel').textContent = q.label;
   const st = STATES[q.state];
   el.querySelector('.amp-display').textContent = st ? st.amp : '';
-  if(window.QCConcepts) QCConcepts.decorate(el, q.id);
 }
 
 function onQMouseDown(e, id){
@@ -85,7 +84,6 @@ function onQMouseDown(e, id){
 
 function onQClick(e, id){
   e.stopPropagation();
-  if(window.QCConcepts && QCConcepts.handleQubitClick(id)) return;
   if(state.tool === 'select'){
     state.selected = id;
     renderAll();
@@ -153,10 +151,10 @@ function applyPrimitive(prim, qid){
   else if(prim === 'link'){
     if(!state.linkSource){
       if(q.state === 'ground'){
-        invalidFlash(qid); toast('Entangle source needs Shake first — apply Shake then try Entangle', 'error'); return;
+        invalidFlash(qid); toast('Link source needs Shake first — apply Shake then try Link', 'error'); return;
       }
       if(q.state === 'measured'){
-        invalidFlash(qid); toast('Cannot Entangle from a measured qubit', 'error'); return;
+        invalidFlash(qid); toast('Cannot Link from a measured qubit', 'error'); return;
       }
       state.linkSource = qid;
       state.selected = qid;
@@ -169,7 +167,7 @@ function applyPrimitive(prim, qid){
       const target = state.qubits.find(x=>x.id===qid);
       if(target.state === 'measured'){
         invalidFlash(qid); state.linkSource=null;
-        toast('Cannot Entangle with a measured qubit — already classical', 'error'); return;
+        toast('Cannot Link to a measured qubit — already classical', 'error'); return;
       }
       // existing edge?
       const exists = state.edges.find(e=>(e.src===src&&e.tgt===qid)||(e.src===qid&&e.tgt===src));
@@ -180,8 +178,8 @@ function applyPrimitive(prim, qid){
       srcQ.state = 'entangled'; srcQ.ops.push({op:'link', seq:linkSeq});
       target.state = 'entangled'; target.ops.push({op:'link', seq:linkSeq});
       state.linkSource = null;
-      addLog(`⋈ Entangle → ${src}↔${qid}: Bell state |Φ⟩`, 'violet');
-      toast('Entangled — measuring one determines the other', 'valid');
+      addLog(`⋈ Link → ${src}↔${qid}: Bell state |Φ⟩`, 'violet');
+      toast('Linked — measuring one determines the other', 'valid');
     }
   }
   else if(prim === 'look'){
@@ -195,43 +193,31 @@ function applyPrimitive(prim, qid){
     const lookSeq = state.nextSeq++;
     q.state = 'measured'; q.ops.push({op:'look', seq:lookSeq}); q.result = result;
     // Log the measured qubit first — it causes the partner collapse, not the other way round
-    addLog(`◙ Measure → ${qid} collapsed to |${result}⟩`, '');
+    addLog(`◙ Look → ${qid} collapsed to |${result}⟩`, '');
     // break entanglement pairs — partner collapses at the same seq instant
     state.edges.forEach(e=>{
       if(e.src===qid||e.tgt===qid){
         const partner = state.qubits.find(x=>x.id===(e.src===qid?e.tgt:e.src));
         if(partner && partner.state==='entangled'){
           partner.state = 'measured';
-          // Shake + Entangle (CNOT) makes (|00⟩ + |11⟩)/√2: both qubits always give the SAME result.
-          partner.result = result;
+          partner.result = result === '0' ? '1' : '0'; // correlated
           partner.ops.push({op:'look', seq:lookSeq, correlated:true});
-          addLog(`◙ Measure → ${partner.id} collapsed to |${partner.result}⟩ (correlated)`, 'violet');
+          addLog(`◙ Look → ${partner.id} collapsed to |${partner.result}⟩ (correlated)`, 'violet');
         }
       }
     });
     showResult(qid, result);
-    toast(`Measured: ${q.label || qid} = |${result}⟩`, 'valid');
+    toast(`Measured: ${qid} = |${result}⟩`, 'valid');
   }
 
   renderAll();
   updateStatus();
 }
 
-// Grover with one marked state among N = 2^n qubits' states: after k Boosts, P(marked) = sin²((2k+1)·θ), sin θ = 1/√N.
-function groverChances(q){
-  const n = state.qubits.length, N = Math.pow(2, n), k = q.ops.filter(o=>o.op==='boost').length;
-  const th = Math.asin(1/Math.sqrt(N)), pm = Math.pow(Math.sin((2*k+1)*th), 2);
-  const marked = q.ops.some(o=>o.op==='mark');
-  // a qubit that is 1 in the marked answer, or one that is 0 in it (Shaken, Boosted, not Marked)
-  const p1 = marked ? pm + (1-pm) * (N/2 - 1) / (N - 1) : (1-pm) * (N/2) / (N - 1);
-  return { k, pm, p1 };
-}
-
 function measureQubit(q){
   // probability based on state
-  if(q.state === 'boosted') return Math.random() < groverChances(q).p1 ? '1' : '0';
-  if(q.state === 'marked') return Math.random() > 0.5 ? '1' : '0';   // Mark changes a hidden sign, not the chances
-  if(q.state === 'super' && q.ops.some(o=>o.op==='boost')) return Math.random() < groverChances(q).p1 ? '1' : '0';
+  if(q.state === 'boosted') return '1'; // high probability
+  if(q.state === 'marked') return Math.random() > 0.1 ? '1' : '0';
   if(q.state === 'super') return Math.random() > 0.5 ? '1' : '0';
   if(q.state === 'entangled') return Math.random() > 0.5 ? '1' : '0';
   return '0';
@@ -243,41 +229,52 @@ function showResult(qid, result){
   const note = document.getElementById('result-note');
   const q = state.qubits.find(x=>x.id===qid);
 
-  // A quick canvas preview, not a simulation: the exact result comes from Execute (Aer).
-  const preview = ' <span style="opacity:.7">· quick preview — press <b>Execute</b> for the real result</span>';
   let p0, p1, noteText;
-  const linked = state.edges.some(e => e.src === qid || e.tgt === qid);
-  if(q.ops.some(o=>o.op==='boost') && state.qubits.some(x=>x.ops.some(o=>o.op==='mark'))){
-    const { k, pm, p1: pq1 } = groverChances(q);
-    p1 = Math.round(100*pq1); p0 = 100 - p1;
-    noteText = `<b>Search result</b> — after ${k} Boost${k>1?'s':''}, the marked answer has a ${Math.round(100*pm)}% chance`;
-  } else if(linked){
+  if(q.ops.some(o=>o.op==='boost') || result==='1'){
+    p0 = 5; p1 = 95;
+    noteText = `<b>Grover-like result</b> — Shake→Mark→Boost→Look found the target`;
+  } else if(q.ops.filter(o=>o.op==='shake').length && !q.ops.some(o=>o.op==='mark')){
     p0 = 50; p1 = 50;
-    noteText = `<b>Entangled</b> — 50/50 on its own, but its partner always gives the same result (got |${result}⟩)`;
-  } else if(q.ops.some(o=>o.op==='shake')){
-    p0 = 50; p1 = 50;
-    noteText = q.ops.some(o=>o.op==='mark')
-      ? `<b>Still 50/50</b> — Mark only flips a hidden sign; Boost turns it into a change you can measure (got |${result}⟩)`
-      : `<b>Equal superposition</b> — 50/50 (got |${result}⟩)`;
+    noteText = `<b>Equal superposition</b> — 50/50 without Mark or Boost`;
   } else {
-    p0 = result==='0'?100:0; p1 = 100-p0;
+    p0 = result==='0'?80:20; p1 = result==='0'?20:80;
     noteText = `<b>${qid}</b> collapsed to |${result}⟩`;
   }
-  noteText += preview;
 
   bars.innerHTML = `
     <div class="result-bar-wrap">
       <div class="result-bar-val" style="color:var(--teal)">${p0}%</div>
-      <div class="result-bar" style="height:${p0*0.4}px;background:var(--teal)"></div>
+      <div class="result-bar" style="height:${p0*0.5}px;background:var(--teal)"></div>
       <div class="result-bar-lbl">|0⟩</div>
     </div>
     <div class="result-bar-wrap">
       <div class="result-bar-val" style="color:var(--rose)">${p1}%</div>
-      <div class="result-bar" style="height:${p1*0.4}px;background:var(--rose)"></div>
+      <div class="result-bar" style="height:${p1*0.5}px;background:var(--rose)"></div>
       <div class="result-bar-lbl">|1⟩</div>
     </div>`;
   note.innerHTML = noteText;
   panel.style.display = 'block';
+}
+
+function runSystem(){
+  // auto-run Grover if we have Shake+Mark+Boost path
+  const boosted = state.qubits.filter(q=>q.state==='boosted');
+  if(boosted.length > 0){
+    addLog(`▶ Run — executing Grover sequence`, 'teal');
+    addLog(`  50 samples · 1 iteration · 0.021s`, 'teal');
+    const runSeq = state.nextSeq++;
+    boosted.forEach(q=>{
+      q.state='measured'; q.result='1'; q.ops.push({op:'look', seq:runSeq, auto:true});
+    });
+    state.qubits.filter(q=>q.state==='super').forEach(q=>{
+      q.state='measured'; q.result='0'; q.ops.push({op:'look', seq:runSeq + 0.1, auto:true});
+    });
+    showResult(boosted[0].id, '1');
+    renderAll();
+    toast('Run complete — result mapped back to canvas', 'valid');
+    return;
+  }
+  toast('Apply Shake → Mark → Boost first, then Run', 'warn');
 }
 
 function invalidFlash(qid){
@@ -289,8 +286,6 @@ function invalidFlash(qid){
 
 function toast(msg, type='valid'){
   const wrap = document.getElementById('toast-wrap');
-  // keep at most two messages on screen so they never pile up over the result card or the step builder
-  while(wrap.children.length >= 2) wrap.firstElementChild.remove();
   const t = document.createElement('div');
   t.className = 'toast '+type;
   t.textContent = msg;
@@ -355,7 +350,9 @@ function renderEdges(){
 }
 
 function checkRunnable(){
-  const hasSequence = state.qubits.some(q=>q.ops.some(o=>o.op==='shake')) || (window.QCConcepts && QCConcepts.hasSteps());
+  const hasSequence = state.qubits.some(q=>q.ops.some(o=>o.op==='shake'));
+  const hasBoosted  = state.qubits.some(q=>q.state==='boosted');
+  document.getElementById('run-btn').disabled  = !hasBoosted && !hasSequence;
   document.getElementById('pc-btn').disabled   = !hasSequence;
   const execBtn = document.getElementById('exec-btn');
   if(execBtn) execBtn.disabled = !hasSequence;
@@ -367,14 +364,12 @@ function updateStatus(){
   const n = state.qubits.length;
   document.getElementById('qubit-count').textContent = n;
   document.getElementById('sb-qubits').textContent = n;
-  // keep id="qubit-count" on the rewritten markup: without it the next updateStatus() call threw
-  if(n===0) document.getElementById('tb-status').innerHTML = '<b id="qubit-count">0</b> qubits · select a primitive to begin';
+  if(n===0) document.getElementById('tb-status').innerHTML = '<b>0</b> qubits · select a primitive to begin';
   else {
     const states = [...new Set(state.qubits.map(q=>q.state))].join(', ');
-    document.getElementById('tb-status').innerHTML = `<b id="qubit-count">${n}</b> qubits · states: ${states}`;
+    document.getElementById('tb-status').innerHTML = `<b>${n}</b> qubits · states: ${states}`;
   }
   if(n > 0) document.getElementById('hint').style.display='none';
-  if(window.QCConcepts) QCConcepts.onCanvasChange();
 }
 
 function clearCanvas(){
@@ -384,11 +379,9 @@ function clearCanvas(){
   });
   state.qubits = [];
   state.edges = [];
-  state.nextId = 1;        // so a fresh canvas starts again at Q1
   state.linkSource = null;
   state.nextSeq = 0;
   state.selected = null;
-  if(window.QCConcepts) QCConcepts.reset();
   getEdgeLayer().innerHTML = '';
   document.getElementById('hint').style.display='';
   document.getElementById('result-panel').style.display='none';
@@ -428,7 +421,6 @@ document.addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
   if(map[e.key]) setTool(map[e.key]);
   if(e.key==='Delete'||e.key==='Backspace'){
-    if(state.selected && window.QCConcepts && QCConcepts.blocksQubitDelete()){ toast('Remove the concept steps first — they refer to qubits by position.', 'warn'); return; }
     if(state.selected){
       const idx = state.qubits.findIndex(x=>x.id===state.selected);
       if(idx>-1){
@@ -444,4 +436,4 @@ document.addEventListener('keydown', e=>{
 });
 
 // init
-toast('Place qubits with ⊕, then apply Shake → Mark → Boost → Measure', 'info');
+toast('Place qubits with ⊕, then apply Shake → Mark → Boost → Look', 'info');
