@@ -3,46 +3,36 @@ Link to website : https://blue-sea-0f9bdf510.7.azurestaticapps.net/
 Canvas → Pseudocode → Qiskit → IonQ
 
 
+## What it does
+
+Build a quantum circuit from **concepts** (named groups of gates such as Superposition, Entangle, Oracle and Amplitude amplification) or from individual gates, and see exactly what it becomes: the gates inside every concept, the Qiskit, OpenQASM 3 and pseudocode for the circuit, the state after every step, and a run on a simulator or IonQ with the result checked against an exact prediction.
+
+- **Build** — palette (Concepts | Gates), qubit wires `q0, q1…`, double-click a block to see its gates, undo/redo. The panel under the wires has tabs **Qiskit | OpenQASM 3 | Pseudocode | Math**. Qiskit and OpenQASM are editable and the canvas follows; code you don't change keeps its concept blocks. Errors are shown with their line numbers, with optional AI help whose suggested code is checked before it can be used.
+- **Bring code** — paste or upload Qiskit or OpenQASM 2/3. The code is read, never executed. Every gate is kept exactly, unsupported lines are reported by line number, and familiar patterns are offered as concepts, each verified to be the same operation.
+- **Run and explain** — the built-in Aer simulator, plus device noise models and IonQ when configured. Every step is checked by exact simulation; the explanation is generated from those checks, and an optional AI explanation is thrown away if it contradicts them.
+- **Practice problems** — 14 problems on the home page, checked automatically.
+- **My runs** — run history in the browser, with share links for runs stored on the server.
+
 ## Project structure
 
 ```
 quantumcanvas/
-├── frontend/
-│   ├── index.html          # Canvas + all UI
-│   ├── css/
-│   │   ├── main.css        # Layout, canvas, toolbar, nodes
-│   │   └── pseudocode.css  # Pseudocode panel, Qiskit panel, Execute panel
-│   └── js/
-│       ├── state.js         # Canvas state, primitives, rendering
-│       ├── ir.js            # IR extractor + validator
-│       ├── pseudocode.js    # Pseudocode generator
-│       ├── ui.js            # Pseudocode panel renderer
-│       ├── qiskit-generator.js  # Qiskit code generator
-│       ├── qiskit-panel.js      # Qiskit panel renderer
-│       └── execute.js           # Execute panel (calls backend)
-│
-├── backend/
-│   ├── app.py              # FastAPI server (POST /execute, GET /job/{id})
-│   ├── config.py           # Settings from .env
-│   ├── ionq_runner.py      # IonQ API client + circuit translator
-│   ├── logger.py           # Artifact logger (saves per-run folders)
-│   └── requirements.txt
-│
-├── logs/                   # Auto-created. Every run saved here.
-│   └── 2026-06-16_22-41_SIMULATOR/
-│       ├── canvas.json
-│       ├── ir.json
-│       ├── pseudocode.txt
-│       ├── qiskit.py
-│       ├── ionq_request.json
-│       ├── ionq_response.json
-│       ├── results.json
-│       ├── execution.log
-│       └── errors.log
-│
-├── .env.example            # Copy to .env and fill in keys
-├── .gitignore              # .env and logs/ are ignored
-└── README.md
+├── frontend/                 Static site, no build step
+│   ├── index.html            App shell
+│   ├── css/app.css           Styles (light and dark)
+│   ├── js/app/               Router, Build, code panel, Bring code, runs, help
+├── backend/                  FastAPI service
+│   ├── app.py                HTTP API
+│   ├── concepts/             Concept IR: schema, validation, lowering to gates, Qiskit / OpenQASM 3 / IonQ output
+│   ├── mathlayer/            Exact simulation, per-step facts and checks, notation
+│   ├── explain/              Template and AI explanations, claim checking, AI code help
+│   ├── codeimport/           Qiskit / OpenQASM import and concept suggestions
+│   ├── engine_bridge/        Backend catalog and optional external compile engine
+│   ├── problems/             Practice problems and checker
+│   ├── runlog/               Versioned run records, redaction, replay
+│   └── tests/                pytest suite (python -m pytest -q from backend/)
+├── logs/runs/                One folder per unique circuit, keyed by circuit hash (see Logging)
+└── .env.example              Copy to backend/.env and fill in what you need
 ```
 
 ## Setup
@@ -50,8 +40,8 @@ quantumcanvas/
 ### 1. Copy and fill `.env`
 
 ```bash
-cp .env.example .env
-# Edit .env and set IONQ_API_KEY
+cp .env.example backend/.env
+# Everything is optional: IonQ key, compile engine, AI provider. Without them the built-in simulator still works.
 ```
 
 ### 2. Install backend dependencies
@@ -66,83 +56,71 @@ pip install -r requirements.txt
 ### 3. Start the backend
 
 ```bash
-python app.py
+python -m uvicorn app:app --port 8000
 # Starts on http://localhost:8000
 # Check: http://localhost:8000/health
 ```
 
 ### 4. Open the frontend
 
-Open `frontend/index.html` in a browser directly (no build step needed).
-
-For local CORS to work, serve via a simple HTTP server:
+Serve the static frontend (no build step):
 
 ```bash
 cd frontend
-python -m http.server 3000
-# Open http://localhost:3000
+python -m http.server 5500
+# Open http://localhost:5500
 ```
 
 ## Execution pipeline
 
 ```
-Canvas
-  ↓ (user builds circuit)
-{ } Pseudocode
-  ↓ (review + approve)
-Generate Qiskit ▶
-  ↓ (see generated Python)
-Execute ⚡
-  ↓ (choose Simulator or IonQ)
-Backend POST /execute
-  ↓ (API key stays server-side)
-IonQ API
+Concepts or gates on the canvas  (or edited / imported Qiskit and OpenQASM)
+  ↓ POST /compile — validate, lower to gates, emit Qiskit, OpenQASM 3 and pseudocode, check every step
+Run ▶  (choose a backend)
+  ↓ POST /execute — API keys stay server-side; real hardware is off unless ALLOW_QPU_SUBMIT=on
+Simulator or IonQ
   ↓
-Results saved to logs/
+Counts compared with the exact prediction, run record saved to logs/runs/
   ↓
-Displayed in Execute panel
+Results and explanation in Build, history in My runs
 ```
 
-## Logging options
+## Logging
 
 Logs used to live only on Azure's ephemeral disk (lost on redeploy, not
-shareable). They are now **version-controlled in this repo** under `logs/`.
-The Execute panel lets each user choose where a run's log goes:
+shareable). They are now **version-controlled in this repo** under `logs/runs/`.
 
-| Option | Where it goes | Needs backend? | Best for |
-|--------|---------------|----------------|----------|
-| **A — Browser storage** | `localStorage` in your browser | No | Quick personal history, offline |
-| **B — Download file** | Your file manager (a `.json` bundle) | No | Keeping a private copy anywhere |
-| **C — GitHub repo** | `logs/<username>/…` in this repo | Local backend (or manual drop) | Sharing runs with the team |
+**One folder per unique circuit**, not per execution — the folder name is a
+hash of the circuit's IR, so running Aer and then IonQ Sim against the exact
+same circuit lands both results in the same folder, and editing the canvas
+afterward always creates a *new* folder rather than overwriting the old one.
 
-Option C needs **no GitHub login** — the username is just a folder-naming
-convention (`logs/<username>/<run_id>/`). When you run the backend from your own
-clone, the in-app *GitHub repo* button writes straight into `logs/`, ready to
-`git add logs/ && git commit && git push`. On the hosted site it hands you a
-ready-named file to drop in and commit yourself. See `logs/README.md` and
-`frontend/js/user-logger.js` for details. Backend route: `POST /save-log`.
+Two ways a circuit ends up logged:
+1. **Running any backend** — saves the circuit, then adds that backend's results
+   and a versioned run record (`runrecord_<id>.vN.json`).
+2. **POST /log-circuit** — an explicit snapshot without running.
 
-## Security
+No login, no username-based sharing step — it's just what the backend does.
+To get a run into GitHub: run the backend from your own clone (so `logs/runs/`
+lands inside your working copy), then `git add logs/ && git commit && git push`
+as usual. See `logs/README.md` for the full layout.
 
-- `IONQ_API_KEY` lives only in `.env` on the server
-- The frontend never sees the key — it only posts circuit data to `/execute`
-- `.env` is in `.gitignore`
-- `logs/` is version-controlled; only transient `execution.log` / `errors.log`
-  debug files are git-ignored
+Each run also keeps a copy in your browser (My runs), with a share link when the server stored the run.
 
 ## Log artifacts
 
-Every run saves:
+Every circuit's folder accumulates:
 
 | File | Contents |
 |------|----------|
-| `canvas.json` | Raw canvas state at time of execution |
+| `canvas.json` | Raw canvas state |
 | `ir.json` | Internal Representation (validated) |
 | `pseudocode.txt` | Human-readable pseudocode steps |
 | `qiskit.py` | Generated Qiskit Python code |
-| `ionq_request.json` | Exact payload sent to IonQ API |
-| `ionq_response.json` | Raw IonQ API response |
-| `results.json` | Shot count histogram |
+| `results_aer.json` / `results_ionq.json` / `results_qpu.json` | Shot count histogram, per backend run |
+| `ionq_request_*.json` / `ionq_response_*.json` | Payload sent to / raw response from IonQ, per backend |
+| `metadata.json` | Circuit hash, git commit, and one entry per backend that ran |
+| `runrecord_<id>.vN.json` | Full run record: input, compiled gates, seed, backend, counts, checks, explanation (secrets redacted) |
 | `execution.log` | Timestamped run log |
 | `errors.log` | Errors only |
 
