@@ -26,6 +26,28 @@ export function legend(width) {
   return `Bits read right to left, as in Qiskit: an outcome lists ${order}, so the rightmost bit is c0.`;
 }
 
+export function renderProbabilities({ predicted, width }) {
+  const probs = {};
+  for (const [k, v] of Object.entries(predicted || {})) probs[k.padStart(width, '0')] = Number(v) || 0;
+  let keys;
+  let truncated = false;
+  if (width <= MAX_ALL) keys = Array.from({ length: 2 ** width }, (_, i) => i.toString(2).padStart(width, '0'));
+  else {
+    keys = Object.keys(probs).filter(k => probs[k] > 0).sort((a, b) => probs[b] - probs[a]).slice(0, MAX_ROWS);
+    truncated = Object.keys(probs).filter(k => probs[k] > 0).length > MAX_ROWS;
+  }
+  const rows = keys.map(k => {
+    const p = probs[k] || 0;
+    const label = k.split('').map((b, i) => `c${k.length - 1 - i}=${b}`).join(' ');
+    return `<div class="rrow" role="listitem" aria-label="Outcome ${k}: probability ${pct(p)}">
+      <span class="k">|${k}⟩<small>${esc(label)}</small></span>
+      <span class="track">${p ? `<span class="fill calc" style="width:${(100 * p).toFixed(2)}%"></span>` : ''}</span>
+      <span class="v">${pct(p)}</span></div>`;
+  }).join('');
+  return `<div class="results-chart" role="list">${rows}</div>
+    <div class="muted" style="font-size:12px">${esc(legend(width))} The bars are exact probabilities calculated from the circuit, not measured shots.${truncated ? ` Showing the ${MAX_ROWS} most likely outcomes.` : ''}</div>`;
+}
+
 export function renderResults({ counts, predicted, width }) {
   const clean = normaliseCounts(counts, width);
   const total = Object.values(clean).reduce((a, b) => a + b, 0) || 1;

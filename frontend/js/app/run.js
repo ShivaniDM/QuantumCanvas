@@ -40,6 +40,15 @@ export async function runCircuit(backendId, label, shots, onStatus = () => {}) {
   if (!compiled) throw new Error(circuit.compileError || 'The circuit could not be checked.');
   if (!compiled.ok) throw new Error(`Fix this first: ${compiled.errors[0].message}`);
   const key = circuit.docKey();
+  if (!circuit.s.nodes.some(n => n.op === 'measure')) {
+    const run = {
+      id: uid('c'), calculated: true, record_id: null, title: circuit.s.title, backend: backendId, backend_label: label, shots,
+      counts: {}, predicted: compiled.step_log?.predicted || null, math: null, flags: [], at: new Date().toISOString(),
+      document: circuit.toDocument(), docKey: key,
+    };
+    circuit.setRun(run);
+    return run;
+  }
   onStatus('submitting');
   let data = await api.post('/execute', payload(compiled, backendId, shots));
   if (!data.counts && data.job_id) {
@@ -71,7 +80,6 @@ export async function openRunDialog({ onDone } = {}) {
       <span class="muted" style="font-size:12px">Shots: how many times the circuit runs.</span><span style="flex:1"></span>
       <button type="button" class="btn ghost" data-cancel>Cancel</button><button type="button" class="btn primary" data-go>Run</button>`,
   });
-  const measures = circuit.s.nodes.some(n => n.op === 'measure');
   let selected = prefs.backend;
   const list = dlg.body.querySelector('[data-list]');
   const go = dlg.footer.querySelector('[data-go]');
@@ -83,14 +91,13 @@ export async function openRunDialog({ onDone } = {}) {
     if (!rows.find(r => r.id === selected && !r.unavailable)) selected = 'aer';
     const groups = [...new Set(rows.map(r => r.group))];
     const avail = rows.filter(r => !r.unavailable).length;
-    list.innerHTML = `${measures ? '' : '<div class="note warn">There is no Measure step, so every qubit is measured at the end.</div>'}
-      <div class="muted" style="font-size:13px">${avail} of ${rows.length} backends are available. Unavailable ones say why.</div>
+    list.innerHTML = `${avail < rows.length ? `<div class="muted" style="font-size:13px">${avail} of ${rows.length} simulators are available. Unavailable ones say why.</div>` : ''}
       <div role="radiogroup" aria-label="Backend" style="display:flex;flex-direction:column;gap:12px">${groups.map(g => {
         const gr = rows.filter(r => r.group === g);
         return `<div><div class="label" style="margin-bottom:6px">${esc(data.groups?.[g] || g)}</div>${gr.map(r => `
           <label class="choice" style="cursor:${r.unavailable ? 'default' : 'pointer'};opacity:${r.unavailable ? .6 : 1}">
             <input type="radio" name="backend" value="${esc(r.id)}" ${r.id === selected ? 'checked' : ''} ${r.unavailable ? 'disabled' : ''}>
-            <span style="flex:1"><b>${esc(r.label)}</b> <span class="muted">· ${r.qubits} qubits${r.kind === 'ideal' ? ' · exact, no noise' : r.kind === 'noise_model' || r.kind === 'noisy' ? ' · with device noise' : ''}</span>
+            <span style="flex:1"><b>${esc(r.label)}</b> <span class="muted">· ${r.qubits} qubits${r.id === 'aer' ? ' · exact, no noise' : r.kind === 'noise_model' || r.kind === 'noisy' ? ' · simulates that device\'s noise' : ''}</span>
             ${r.unavailable ? `<br><span class="muted" style="font-size:12px">${esc(r.unavailable)}</span>` : ''}</span>
             ${r.id === 'aer' ? '<span class="pill">free · instant</span>' : ''}</label>`).join('')}</div>`;
       }).join('')}</div>`;
@@ -112,7 +119,8 @@ export async function openRunDialog({ onDone } = {}) {
     try {
       const run = await runCircuit(row.id, row.label, shots, s => { status.textContent = words[s] || `Status: ${s}`; });
       dlg.close();
-      toast(`Ran ${shots.toLocaleString()} shots on ${row.label}.`);
+      toast(run.calculated ? 'No Measure step, so nothing was measured. Results shows the calculated probabilities.' : `Ran ${shots.toLocaleString()} shots on ${row.label}.`,
+            run.calculated ? { ms: 7000 } : {});
       if (onDone) onDone(run);
     } catch (e) {
       status.className = 'note bad';

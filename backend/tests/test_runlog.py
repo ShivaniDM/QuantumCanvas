@@ -164,6 +164,12 @@ class FakeIonQ:
         return {"00": 300, "11": 300}
 
 
+@pytest.fixture(autouse=True)
+def legacy_backends_offered(monkeypatch):
+    from engine_bridge import bridge
+    monkeypatch.setattr(bridge, "OFFERED", bridge.OFFERED + ("qpu",))
+
+
 def test_backend_mismatch_qpu_requested_simulator_executed_is_flagged(monkeypatch):
     import ionq_runner
     monkeypatch.setattr(ionq_runner, "IonQRunner", FakeIonQ)

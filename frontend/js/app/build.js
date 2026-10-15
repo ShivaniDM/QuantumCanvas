@@ -4,7 +4,7 @@ import { circuit, layout, MAX_QUBITS } from './circuit.js';
 import { blockLabel, blockSub, pseudocodeLine } from './describe.js';
 import { bindEditor, bitsMeasuredBefore, buildNode, conditionable, draftFromNode, hasMeasure, newDraft, renderEditor, toggleQubit } from './editor.js';
 import { fetchExplanation, renderExplanation } from './explain.js';
-import { renderResults, widthOf } from './results.js';
+import { renderProbabilities, renderResults, widthOf } from './results.js';
 import { mountDock, openDock, updateDock } from './dock.js';
 import { openRunDialog } from './run.js';
 import { $, $$, download, esc, store, toast } from './util.js';
@@ -391,8 +391,8 @@ function measureNote() {
   const pairs = measureMap();
   if (pairs.length) return `<div class="muted" style="font-size:12px">Measured: ${esc(pairs.join(', '))}</div>`;
   if (!circuit.s.nodes.length) return '';
-  const all = Array.from({ length: circuit.s.qubits }, (_, q) => `c${q} ← q${q}`).join(', ');
-  return `<div class="muted" style="font-size:12px">No Measure step, so every qubit is measured at the end: ${esc(all)}.</div>`;
+  const all = Array.from({ length: circuit.s.qubits }, (_, q) => `q${q} → c${q}`).join(', ');
+  return `<div class="muted" style="font-size:12px">No Measure step yet. These are calculated probabilities, reading the qubits in order (${esc(all)}). Add a Measure step to run the circuit.</div>`;
 }
 
 function renderResultsTab(panel) {
@@ -400,7 +400,16 @@ function renderResultsTab(panel) {
   const predicted = circuit.compiled?.ok ? circuit.compiled.step_log?.predicted : null;
   const width = Math.max(1, circuit.classicalBits() || circuit.s.qubits);
   let h = '';
-  if (run) {
+  if (run && run.calculated) {
+    const current = circuit.runIsCurrent();
+    h += `<div class="note warn"><b>No Measure step, so nothing was measured${run.backend_label ? ` and nothing was sent to ${esc(run.backend_label)}` : ''}.</b>
+      The bars below are the probabilities calculated from the circuit's final state, not measured results. Add a Measure step and run again to get measured results.</div>`;
+    if (!current) h += '<div class="note warn">The circuit has changed since then. Run again to update this.</div>';
+    const pred = current ? (run.predicted || predicted) : predicted;
+    if (pred) h += `<div class="label">Calculated probabilities (exact)</div>${renderProbabilities({ predicted: pred, width })}`;
+    else h += '<div class="muted">This circuit is too large to calculate the probabilities exactly here.</div>';
+    h += `<div class="chips"><button type="button" class="btn primary small" data-ex-go>Explain this circuit</button></div>`;
+  } else if (run) {
     const w = widthOf(run.counts, width);
     const current = circuit.runIsCurrent();
     const total = Object.values(run.counts).reduce((a, b) => a + b, 0);
@@ -409,14 +418,22 @@ function renderResultsTab(panel) {
       ${renderResults({ counts: run.counts, predicted: current ? predicted : null, width: w })}`;
     h += measureNote();
     const rc = run.math?.result_check;
-    if (rc) h += `<div class="note ${rc.ok === false ? 'bad' : rc.ok === null ? 'info' : 'ok'}">${rc.ok === false ? 'Does not match' : rc.ok === null ? 'Compared with' : 'Matches'} the exact prediction${rc.detail ? ` (${esc(rc.detail)})` : ''}.</div>`;
+    if (rc) {
+      const noisy = /noisy backend/.test(rc.check || '');
+      h += noisy
+        ? `<div class="note ${rc.ok === false ? 'bad' : 'info'}">Compared with the exact prediction: ${esc(rc.detail || '')}.</div>`
+        : `<div class="note ${rc.ok === false ? 'bad' : 'ok'}">${rc.ok === false ? 'Does not match' : 'Matches'} the exact prediction${rc.detail ? ` (${esc(rc.detail)})` : ''}.</div>`;
+    }
+    if (run.backend === 'ionq_sim_ideal') h += '<div class="muted" style="font-size:12px">IonQ\'s ideal simulator returns exact probabilities rather than separate shots, so these counts are those probabilities multiplied by the number of shots.</div>';
+    const noiseFlags = (run.flags || []).filter(f => /^noise_model/.test(f.flag));
+    noiseFlags.forEach(f => { h += `<div class="note bad">Check this run: ${esc(f.detail)}. The result may come from IonQ's ideal simulator.</div>`; });
     const codeBad = (run.math?.failed_checks || []).filter(c => /code|parsed/.test(c));
     if (codeBad.length) h += `<div class="note bad">The code that ran does not match the circuit: ${esc(codeBad.join('; '))}</div>`;
     if (run.save_error) h += `<div class="note bad">${esc(run.save_error)}</div>`;
     h += `<div class="chips"><button type="button" class="btn primary small" data-ex-go>Explain this result</button><a class="btn small" href="#/runs">My runs</a></div>`;
   } else {
     h += `<div class="muted">No run yet. Press Run to sample this circuit.</div>`;
-    if (predicted) h += `<div class="label">Predicted probabilities (exact)</div>${renderResults({ counts: {}, predicted, width })}${measureNote()}`;
+    if (predicted) h += `<div class="label">Predicted probabilities (exact)</div>${renderProbabilities({ predicted, width })}${measureNote()}`;
   }
   panel.innerHTML = h;
   const b = $('[data-ex-go]', panel);
@@ -430,9 +447,9 @@ function renderExplainTab(panel) {
     panel.innerHTML = ui.explain;
     return;
   }
-  panel.innerHTML = `<p style="margin:0">Get a step-by-step explanation of ${circuit.runIsCurrent() ? 'this result' : 'what this circuit does'}: the pseudocode, the principle behind each step, then the math and code when you open them.</p>
+  panel.innerHTML = `<p style="margin:0">Get a step-by-step explanation of ${circuit.runIsCurrent() && !circuit.lastRun.calculated ? 'this result' : 'what this circuit does'}: the pseudocode, the principle behind each step, then the math and code when you open them.</p>
     <div><button type="button" class="btn primary" data-ex-go ${ui.explaining ? 'disabled' : ''}>${ui.explaining ? 'Explaining…' : 'Explain'}</button></div>
-    ${circuit.runIsCurrent() ? '' : '<div class="muted" style="font-size:13px">No current run, so this explains the exact predicted probabilities.</div>'}`;
+    ${circuit.runIsCurrent() && !circuit.lastRun.calculated ? '' : '<div class="muted" style="font-size:13px">No measured run for this circuit, so this explains the exact predicted probabilities.</div>'}`;
   $('[data-ex-go]', panel).addEventListener('click', runExplain);
 }
 
@@ -441,7 +458,7 @@ async function runExplain() {
   ui.explaining = true; if (ui.tab === 'explain') renderInspector();
   const key = explainKey();
   try {
-    const cur = circuit.runIsCurrent() ? circuit.lastRun : null;
+    const cur = circuit.runIsCurrent() && !circuit.lastRun.calculated ? circuit.lastRun : null;
     const r = await fetchExplanation({ recordId: cur?.record_id || null, document: circuit.toDocument(), counts: cur?.counts || null, labels: labels() });
     ui.explain = renderExplanation(r); ui.explainKey = key;
   } catch (e) {

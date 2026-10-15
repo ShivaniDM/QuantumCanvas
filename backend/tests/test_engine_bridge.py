@@ -21,6 +21,13 @@ def _body(backend, doc=BELL, **kw):
             "backend": backend, "shots": 300, "concept_ir": doc, **kw}
 
 
+@pytest.fixture(autouse=True)
+def engine_switched_on(monkeypatch):
+    from engine_bridge import bridge
+    monkeypatch.setattr(bridge, "ENGINE_IN_USE", True)
+    monkeypatch.setattr(bridge, "OFFERED", tuple(r["id"] for r in bridge.OFFLINE_CATALOG) + ("qpu",))
+
+
 @pytest.fixture()
 def engine_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(backend_app.settings, "LOG_DIR", str(tmp_path), raising=False)
@@ -94,7 +101,7 @@ def test_without_an_engine_builtin_and_ionq_still_work(tmp_path, monkeypatch):
                                                               "backend": "simulator"}}
         return "job-off"
 
-    def status(self, job_id, backend_label=""):
+    def status(self, job_id, backend_label="", shots=None):
         return _FakeStatus({"id": job_id, "status": "completed", "backend": "simulator", "shots": 300,
                             "noise": {"model": "forte-1"}})
 
@@ -230,7 +237,7 @@ def test_live_ionq_noisy_job_flow(live_engine, monkeypatch, returned_model, flag
                                                               "backend": "simulator"}}
         return "job-1"
 
-    def status(self, job_id, backend_label=""):
+    def status(self, job_id, backend_label="", shots=None):
         job = {"id": job_id, "status": "completed", "backend": "simulator", "shots": 300}
         if returned_model:
             job["noise"] = {"model": returned_model}

@@ -315,3 +315,4 @@ textarea { width: 100%; resize: vertical; }
 .mx { border-collapse: collapse; font: 400 12px var(--mono); margin-top: 4px; }
 .mx th, .mx td { padding: 2px 8px; text-align: center; border: 1px solid var(--line-2); }
 .mx th { color: var(--muted); font-weight: 500; }
+.results-chart .fill.calc { background: repeating-linear-gradient(45deg, var(--primary) 0 6px, color-mix(in srgb, var(--primary) 70%, transparent) 6px 12px); }

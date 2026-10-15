@@ -9,7 +9,7 @@ Build a quantum circuit from **concepts** (named groups of gates such as Superpo
 
 - **Build** — palette (Concepts | Gates), qubit wires `q0, q1…`, double-click a block to see its gates, undo/redo. The panel under the wires has tabs **Qiskit | OpenQASM 3 | Pseudocode | Math**. Qiskit and OpenQASM are editable and the canvas follows; code you don't change keeps its concept blocks. Errors are shown with their line numbers, with optional AI help whose suggested code is checked before it can be used.
 - **Bring code** — paste or upload Qiskit or OpenQASM 2/3. The code is read, never executed. Every gate is kept exactly, unsupported lines are reported by line number, and familiar patterns are offered as concepts, each verified to be the same operation.
-- **Run and explain** — the built-in Aer simulator, plus device noise models and IonQ when configured. Every step is checked by exact simulation; the explanation is generated from those checks, and an optional AI explanation is thrown away if it contradicts them.
+- **Run and explain** — the built-in Qiskit Aer simulator and IonQ cloud simulators (ideal, or with Forte and Aria device noise models) when an IonQ key is configured. A circuit needs a Measure step to run; without one, Results shows the probabilities calculated from the final state. Every step is checked by exact simulation; the explanation is generated from those checks, and an optional AI explanation is thrown away if it contradicts them.
 - **Practice problems** — 14 problems on the home page, checked automatically.
 - **My runs** — run history in the browser, with share links for runs stored on the server.
 
@@ -20,14 +20,14 @@ quantumcanvas/
 ├── frontend/                 Static site, no build step
 │   ├── index.html            App shell
 │   ├── css/app.css           Styles (light and dark)
-│   ├── js/app/               Router, Build, code panel, Bring code, runs, help
+│   └── js/app/               Router, Build, code panel, Bring code, runs, help
 ├── backend/                  FastAPI service
 │   ├── app.py                HTTP API
 │   ├── concepts/             Concept IR: schema, validation, lowering to gates, Qiskit / OpenQASM 3 / IonQ output
 │   ├── mathlayer/            Exact simulation, per-step facts and checks, notation
 │   ├── explain/              Template and AI explanations, claim checking, AI code help
 │   ├── codeimport/           Qiskit / OpenQASM import and concept suggestions
-│   ├── engine_bridge/        Backend catalog and optional external compile engine
+│   ├── engine_bridge/        Backend catalog (simulators offered) and IonQ request building
 │   ├── problems/             Practice problems and checker
 │   ├── runlog/               Versioned run records, redaction, replay
 │   └── tests/                pytest suite (python -m pytest -q from backend/)
@@ -41,7 +41,7 @@ quantumcanvas/
 
 ```bash
 cp .env.example backend/.env
-# Everything is optional: IonQ key, compile engine, AI provider. Without them the built-in simulator still works.
+# Everything is optional: IonQ key and AI provider. Without them the built-in simulator still works.
 ```
 
 ### 2. Install backend dependencies
@@ -77,7 +77,7 @@ python -m http.server 5500
 Concepts or gates on the canvas  (or edited / imported Qiskit and OpenQASM)
   ↓ POST /compile — validate, lower to gates, emit Qiskit, OpenQASM 3 and pseudocode, check every step
 Run ▶  (choose a backend)
-  ↓ POST /execute — API keys stay server-side; real hardware is off unless ALLOW_QPU_SUBMIT=on
+  ↓ POST /execute — API keys stay server-side; only simulators are offered
 Simulator or IonQ
   ↓
 Counts compared with the exact prediction, run record saved to logs/runs/
@@ -126,13 +126,15 @@ Every circuit's folder accumulates:
 
 ## IonQ backend notes
 
-| Backend | Status |
-|---------|--------|
-| `simulator` | Available — 29 qubits, forte-1 noise model |
-| `qpu.forte-1` | Queue ~340 days |
-| `qpu.aria-1/2` | Retired |
+QuantumCanvas offers IonQ's cloud simulator only:
 
-Use `simulator` for all development and QA.
+| Option | What it runs |
+|--------|--------------|
+| IonQ simulator · ideal | No noise. IonQ returns exact probabilities, shown as counts for the chosen number of shots |
+| IonQ simulator · Forte 1 / Forte Enterprise 1 noise model | Each shot simulated with that device's noise |
+| IonQ simulator · Aria 1 / Aria 2 noise model | Noise models of retired devices |
+
+Each run record stores the noise model IonQ reports it used, and the run is flagged if that differs from the one requested.
 
 ## Acknowledgements
 This effort is supported via compute credits from Qollab and IonQ.
