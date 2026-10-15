@@ -1,17 +1,3 @@
-"""
-QuantumCanvas - IonQ Runner (API v0.4)
-Handles all IonQ API communication.
-API key is read from config (env var), never from the request.
-
-v0.4 job model (validated against the live API):
-  - Submit:  POST /v0.4/jobs  with  {type: "ionq.circuit.v1", backend,
-             shots, input: {gateset: "qis", qubits, circuit}}  (+ dry_run for cost)
-  - Poll:    GET /v0.4/jobs/{id}  until status == "completed"
-             ("ready"/"started" are INTERMEDIATE, not done)
-  - Counts:  job.results.probabilities.url -> {state: prob} -> round(prob*shots)
-  - Cost:    GET /v0.4/jobs/{id}/cost -> estimated_cost.value (USD)
-"""
-
 import time
 import re
 from dataclasses import dataclass
@@ -21,30 +7,19 @@ import requests
 from logger import ArtifactLogger
 
 
-# -- Data classes ------------------------------------------------------
-
 @dataclass
 class JobStatus:
     job_id:       str
-    status:       str          # submitted | ready | started | completed | failed | canceled
+    status:       str
     counts:       Optional[dict] = None
     raw_response: Optional[dict] = None
 
     @property
     def is_terminal(self) -> bool:
-        # v0.4: only these are done. "ready"/"started" mean still queued/running.
         return self.status in ("completed", "failed", "canceled", "cancelled")
 
 
-# -- Gate translation: Qiskit Python source -> IonQ QIS circuit --------
-
 def qiskit_source_to_ionq_circuit(qiskit_code: str, n_qubits: int) -> dict:
-    """
-    Parse the generated Qiskit source into a v0.4 `input` object:
-        {"gateset": "qis", "qubits": n, "circuit": [ {gate, ...}, ... ]}
-    Handles exactly the gates QuantumCanvas generates: h, x, z, cx, cz, ccx.
-    (All map to valid QIS gates: h, x, z, cnot, t, ti, ...)
-    """
     gates = []
 
     code_lines = [
@@ -91,7 +66,13 @@ def qiskit_source_to_ionq_circuit(qiskit_code: str, n_qubits: int) -> dict:
             gates.extend(_toffoli(a, b, c))
             continue
 
-        # measure calls are implicit on IonQ (all qubits measured at end) - skip
+        m = re.match(r'qc\.mcx\(\[([\d,\s]+)\],\s*(\d+)\)', line)
+        if m:
+            controls = [int(x) for x in m.group(1).split(',') if x.strip()]
+            target = int(m.group(2))
+            gates.append({"gate": "mcx", "target": target, "controls": controls})
+            continue
+
 
     return {"gateset": "qis", "qubits": n_qubits, "circuit": gates}
 
@@ -123,8 +104,6 @@ def _toffoli(a: int, b: int, c: int) -> list:
     ]
 
 
-# -- Runner ------------------------------------------------------------
-
 class IonQRunner:
     JOBS_URL   = "/v0.4/jobs"
     STATUS_URL = "/v0.4/jobs/{job_id}"
@@ -134,6 +113,8 @@ class IonQRunner:
         self.api_key  = api_key
         self.endpoint = endpoint.rstrip('/')
         self.logger   = logger
+        self.last_submit = None
+        self.last_status = None
         self.session  = requests.Session()
         self.session.headers.update({
             "Authorization": f"apiKey {self.api_key}",
@@ -144,9 +125,14 @@ class IonQRunner:
         m = re.search(r'QuantumCircuit\((\d+)', qiskit_code)
         return int(m.group(1)) if m else 2
 
+    def _circuit_for(self, qiskit_code: str, ionq_circuit: dict | None) -> dict:
+        if ionq_circuit is not None:
+            return ionq_circuit
+        return qiskit_source_to_ionq_circuit(qiskit_code, self._n_qubits(qiskit_code))
+
     def _submit_job(self, ionq_input: dict, shots: int, backend: str,
-                    name: str, dry_run: bool = False) -> str:
-        """Submit a v0.4 single-circuit job and return the job_id."""
+                    name: str, dry_run: bool = False, noise: dict | None = None) -> str:
+        label = name.replace('qc-', '')
         payload = {
             "type":    "ionq.circuit.v1",
             "backend": backend,
@@ -156,32 +142,32 @@ class IonQRunner:
         }
         if dry_run:
             payload["dry_run"] = True
+        if noise:
+            payload["noise"] = noise
 
-        self.logger.save("ionq_request.json", payload)
+        self.logger.save(f"ionq_request_{label}.json", payload)
         self.logger.log(f"Submitting to IonQ backend={backend} shots={shots} dry_run={dry_run}")
 
         resp = self.session.post(self.endpoint + self.JOBS_URL, json=payload, timeout=30)
-        # Surface IonQ's real error body (quota/billing/access reasons) on failure.
         if not resp.ok:
             body = resp.text
             self.logger.error(f"IonQ submit failed {resp.status_code}: {body}")
-            self.logger.save("ionq_error.json", {"status": resp.status_code, "body": body})
+            self.logger.save(f"ionq_error_{label}.json", {"status": resp.status_code, "body": body})
             raise RuntimeError(f"IonQ {resp.status_code}: {body}")
 
         data = resp.json()
-        self.logger.save("ionq_response.json", data)
+        self.last_submit = {"http_status": resp.status_code, "response": data}
+        self.logger.save(f"ionq_response_{label}.json", data)
         self.logger.log(f"IonQ submitted job_id={data.get('id')} status={data.get('status')}")
         return data["id"]
 
-    def run_simulator(self, qiskit_code: str, shots: int) -> dict:
-        """Submit to the IonQ cloud simulator, poll until completed, return counts."""
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+    def run_simulator(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None) -> dict:
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
         job_id  = self._submit_job(circuit, shots, "simulator", "qc-simulator")
 
-        for attempt in range(90):          # up to ~180s
+        for attempt in range(90):
             time.sleep(2)
-            status = self.get_job_status(job_id)
+            status = self.get_job_status(job_id, backend_label="simulator")
             self.logger.log(f"Poll {attempt+1}: job={job_id} status={status.status}")
             if status.status in ("failed", "canceled", "cancelled"):
                 raise RuntimeError(f"IonQ job {status.status}")
@@ -189,32 +175,30 @@ class IonQRunner:
                 return status.counts or {}
         raise TimeoutError(f"Simulator job {job_id} did not complete in time")
 
-    def submit_ionq_sim(self, qiskit_code: str, shots: int) -> str:
-        """Submit to the IonQ cloud *simulator* (async). Returns job_id for polling.
-        Named explicitly so it is never confused with submit_qpu()."""
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+    def submit_ionq_sim(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None) -> str:
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
         return self._submit_job(circuit, shots, "simulator", "qc-ionq-sim")
 
     def submit_hardware(self, qiskit_code: str, shots: int) -> str:
-        """Back-compat alias: older app.py called the IonQ-simulator submit
-        'submit_hardware' (it targets the simulator, NOT the QPU)."""
         return self.submit_ionq_sim(qiskit_code, shots)
 
-    def submit_qpu(self, qiskit_code: str, shots: int) -> str:
-        """Submit to real QPU hardware (qpu.forte-1). User must have confirmed cost."""
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
+    def submit_qpu(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None) -> str:
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
         return self._submit_job(circuit, shots, "qpu.forte-1", "qc-qpu")
 
-    def estimate_cost(self, qiskit_code: str, shots: int) -> dict:
-        """
-        Dry-run on qpu.forte-1 to get a cost estimate without executing.
-        v0.4: submit dry_run, poll to completed, then GET /cost for the USD value.
-        """
-        n       = self._n_qubits(qiskit_code)
-        circuit = qiskit_source_to_ionq_circuit(qiskit_code, n)
-        job_id  = self._submit_job(circuit, shots, "qpu.forte-1", "qc-cost-estimate", dry_run=True)
+    def submit_target(self, ionq_input: dict, shots: int, backend: str, label: str,
+                      noise_model: str | None = None, seed: int | None = None) -> str:
+        noise = None
+        if backend == "simulator" and noise_model and noise_model != "ideal":
+            noise = {"model": noise_model}
+            if seed is not None:
+                noise["seed"] = max(1, int(seed) % (2 ** 31))
+        return self._submit_job(ionq_input, shots, backend, f"qc-{label}", noise=noise)
+
+    def estimate_cost(self, qiskit_code: str, shots: int, ionq_circuit: dict | None = None,
+                      backend: str = "qpu.forte-1") -> dict:
+        circuit = self._circuit_for(qiskit_code, ionq_circuit)
+        job_id  = self._submit_job(circuit, shots, backend, "qc-cost-estimate", dry_run=True)
 
         data = {}
         for _ in range(30):
@@ -226,7 +210,6 @@ class IonQRunner:
                 break
         self.logger.save("ionq_cost_response.json", data)
 
-        # USD cost lives at the dedicated cost endpoint in v0.4.
         cost_usd = None
         try:
             cr = self.session.get(self.endpoint + self.COST_URL.format(job_id=job_id), timeout=15)
@@ -243,31 +226,26 @@ class IonQRunner:
         return {
             "cost_usd":    cost_usd,
             "queue_days":  340,
-            "target":      data.get("backend", "qpu.forte-1"),
+            "target":      data.get("backend", backend),
             "gate_counts": stats.get("gate_counts"),
         }
 
-    def get_job_status(self, job_id: str) -> JobStatus:
-        """Poll a job. Counts are fetched only once status == 'completed'."""
+    def get_job_status(self, job_id: str, backend_label: str = "") -> JobStatus:
         resp = self.session.get(self.endpoint + self.STATUS_URL.format(job_id=job_id), timeout=15)
         resp.raise_for_status()
         data   = resp.json()
+        self.last_status = data
         status = data.get("status", "unknown")
         self.logger.log(f"IonQ job {job_id} status={status}")
 
         counts = None
         if status == "completed":
             shots  = data.get("shots", 1000)
-            counts = self._extract_counts(data, shots)
+            counts = self._extract_counts(data, shots, backend_label)
 
         return JobStatus(job_id=job_id, status=status, counts=counts, raw_response=data)
 
-    def _extract_counts(self, data: dict, shots: int) -> dict:
-        """
-        v0.4: a completed job's `results` maps names -> descriptors. The
-        'probabilities' entry carries a direct url returning {state: prob}
-        (integer/hex state keys). Convert to counts keyed by bitstring.
-        """
+    def _extract_counts(self, data: dict, shots: int, backend_label: str = "") -> dict:
         results  = data.get("results") or {}
         stats    = data.get("stats") or {}
         n_qubits = stats.get("qubits") or data.get("qubits") or 2
@@ -283,7 +261,8 @@ class IonQRunner:
             resp = self.session.get(full, timeout=15)
             resp.raise_for_status()
             payload = resp.json()
-            self.logger.save("ionq_results_raw.json", payload)
+            suffix = f"_{backend_label}" if backend_label else ""
+            self.logger.save(f"ionq_results_raw{suffix}.json", payload)
         except Exception as e:
             self.logger.error(f"Failed to fetch probabilities: {e}")
             return {}
@@ -297,16 +276,29 @@ class IonQRunner:
                         merged[st] = merged.get(st, 0.0) + float(p)
             probs = merged
 
-        counts = {}
+        state_probs = {}
         for state, p in (probs or {}).items():
             try:
                 bits = format(int(str(state), 0), f"0{int(n_qubits)}b")
             except (ValueError, TypeError):
                 bits = str(state)
             try:
-                counts[bits] = counts.get(bits, 0) + round(float(p) * shots)
+                state_probs[bits] = state_probs.get(bits, 0.0) + float(p)
             except (ValueError, TypeError):
                 continue
 
+        counts = _probs_to_counts(state_probs, shots)
         self.logger.log(f"Counts extracted: {counts}")
         return counts
+
+
+def _probs_to_counts(state_probs: dict, shots: int) -> dict:
+    if not state_probs or shots <= 0:
+        return {}
+    raw    = {s: p * shots for s, p in state_probs.items()}
+    counts = {s: int(v) for s, v in raw.items()}
+    remainder = shots - sum(counts.values())
+    if remainder > 0:
+        for s in sorted(raw, key=lambda s: raw[s] - counts[s], reverse=True)[:remainder]:
+            counts[s] += 1
+    return {s: c for s, c in counts.items() if c > 0}

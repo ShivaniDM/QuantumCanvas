@@ -1,29 +1,44 @@
-"""
-QuantumCanvas — Configuration
-Reads from .env via python-dotenv.
-Keys are NEVER passed to the frontend.
-"""
-
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # IonQ credentials — loaded from .env, never committed to git
-    IONQ_API_KEY:  str = "${{ IONQ_API_KEY }}"
+    IONQ_API_KEY:  str = ""
     IONQ_ENDPOINT: str = "https://api.ionq.co"
 
-    # Logging
     LOG_DIR: str = "../logs"
 
-     # Optional MongoDB Atlas mirror — if set, every circuit save/execution is
-    # also written to Mongo so runs persist even when this backend's local
-    # disk is ephemeral (e.g. hosted on Azure). Blank = mirror silently skipped.
+    CORS_ORIGINS: str = "*"
+
+    ALLOW_QPU_SUBMIT: str = "off"
+
+    MAX_QUBITS: int = 24
+    MAX_SHOTS: int = 100_000
+
+    RATE_LIMIT_PER_MINUTE: int = 30
+    RATE_LIMIT_LIGHT_PER_MINUTE: int = 240
+
+    LLM_BASE_URL: str = ""
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = ""
+    LLM_FALLBACK_BASE_URL: str = ""
+    LLM_FALLBACK_API_KEY: str = ""
+    LLM_FALLBACK_MODEL: str = ""
+    LLM_TIMEOUT_S: float = 25.0
+    LLM_DAILY_REQUEST_BUDGET: int = 100
+
+    ENGINE_URL: str = ""
+    ENGINE_API_KEY: str = ""
+    ENGINE_TIMEOUT_S: float = 180.0
+
+    RESEARCH_LOGGING: str = "off"
+
     MONGODB_URI: str = ""
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache()
