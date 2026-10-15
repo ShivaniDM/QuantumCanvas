@@ -230,7 +230,7 @@ class IonQRunner:
             "gate_counts": stats.get("gate_counts"),
         }
 
-    def get_job_status(self, job_id: str, backend_label: str = "") -> JobStatus:
+    def get_job_status(self, job_id: str, backend_label: str = "", shots: int | None = None) -> JobStatus:
         resp = self.session.get(self.endpoint + self.STATUS_URL.format(job_id=job_id), timeout=15)
         resp.raise_for_status()
         data   = resp.json()
@@ -240,8 +240,7 @@ class IonQRunner:
 
         counts = None
         if status == "completed":
-            shots  = data.get("shots", 1000)
-            counts = self._extract_counts(data, shots, backend_label)
+            counts = self._extract_counts(data, data.get("shots") or shots or 1000, backend_label)
 
         return JobStatus(job_id=job_id, status=status, counts=counts, raw_response=data)
 

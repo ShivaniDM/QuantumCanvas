@@ -206,8 +206,19 @@ def _check_target_size(backend: str, n_qubits: int | None, shots: int | None):
         _check_circuit_size(n_qubits, shots)
 
 
+LEGACY_IONQ_SIMULATOR = ("simulator", "ionq")
+
+
+def _check_offered(backend: str) -> None:
+    from engine_bridge import bridge
+    if backend not in bridge.OFFERED and backend not in LEGACY_IONQ_SIMULATOR:
+        raise HTTPException(status_code=400, detail=f"The backend {backend!r} isn't offered here. "
+                                                    "Use the built-in simulator or an IonQ simulator.")
+
+
 @app.post("/execute", response_model=ExecuteResponse)
 async def execute(req: ExecuteRequest):
+    _check_offered(req.backend)
     _check_qpu_allowed(req.backend)
     _check_target_size(req.backend, _n_qubits_of(req.concept_ir, req.ir_json), req.shots)
     if req.backend not in ("aer", "simulator", "ionq", "qpu"):
@@ -239,7 +250,8 @@ async def poll_job(job_id: str):
             endpoint = settings.IONQ_ENDPOINT,
             logger   = logger,
         )
-        status: JobStatus = runner.get_job_status(job_id, backend_label=backend)
+        requested_shots = ((live or {}).get("req") or {}).get("shots")
+        status: JobStatus = runner.get_job_status(job_id, backend_label=backend, shots=requested_shots)
 
         if status.is_terminal and status.counts:
             logger.save(f"ionq_completed_{backend}.json", status.raw_response)

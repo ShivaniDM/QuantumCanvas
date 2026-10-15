@@ -43,8 +43,9 @@ def _template_summary(log: dict, counts: dict | None) -> str:
     bits = []
     if log.get("implicit_measure"):
         n = log.get("n_qubits", 0)
-        bits.append("There is no Measure step, so the run measured every qubit at the end ("
-                    + ", ".join(f"q{q} → c{q}" for q in range(n)) + ").")
+        bits.append("There is no Measure step, so nothing is measured. The probabilities below are calculated from "
+                    "the final state, reading the qubits in order (" + ", ".join(f"q{q} → c{q}" for q in range(n))
+                    + "). Add a Measure step to run the circuit and get measured results.")
     pred = log.get("predicted") or {}
     if pred:
         ranked = sorted(pred.items(), key=lambda kv: -kv[1])

@@ -6,8 +6,10 @@ from . import client
 from .client import EngineRequestError, EngineUnavailable
 
 LEGACY_BACKENDS = ("aer", "simulator", "ionq", "qpu")
-GROUP_LABELS = {"local_sim": "Locally run simulators", "remote_sim": "Remotely run simulators",
+GROUP_LABELS = {"local_sim": "Runs on the QuantumCanvas server", "remote_sim": "IonQ cloud simulators",
                 "hardware": "Quantum hardware"}
+OFFERED = ("aer", "ionq_sim_ideal", "ionq_sim_forte-1", "ionq_sim_forte-enterprise-1", "ionq_sim_aria-1", "ionq_sim_aria-2")
+ENGINE_IN_USE = False
 BUILTIN = {"id": "aer", "label": "Built-in simulator", "group": "local_sim", "provider": "aer", "kind": "ideal",
            "qubits": 24, "native_gates": ["any Qiskit gate"], "connectivity": "all-to-all", "cost": "free",
            "device": None, "family": None, "mid_circuit_measure": True, "reset": True, "feed_forward": True,
@@ -29,10 +31,11 @@ OFFLINE_CATALOG = (
     + [_row(f"ibm_{d}", f"IBM {d.capitalize()}", "local_sim", "ibm", "noise_model", q, cls, fam)
        for d, cls, q, fam in IBM_DEVICES]
     + [_row(f"ionq_sim_{m}", label, "remote_sim", "ionq", "noise_model", q, m, fam)
-       for m, label, q, fam in (("aria-1", "IonQ Aria 1", 25, "Aria"), ("aria-2", "IonQ Aria 2", 25, "Aria"),
-                                ("forte-1", "IonQ Forte 1", 29, "Forte"),
-                                ("forte-enterprise-1", "IonQ Forte Enterprise 1", 29, "Forte"))]
-    + [{**_row("ionq_sim_ideal", "IonQ ideal simulator", "remote_sim", "ionq", "ideal", 29, "ideal", "Forte"),
+       for m, label, q, fam in (("aria-1", "IonQ simulator · Aria 1 noise model (retired device)", 25, "Aria"),
+                                ("aria-2", "IonQ simulator · Aria 2 noise model (retired device)", 25, "Aria"),
+                                ("forte-1", "IonQ simulator · Forte 1 noise model", 29, "Forte"),
+                                ("forte-enterprise-1", "IonQ simulator · Forte Enterprise 1 noise model", 29, "Forte"))]
+    + [{**_row("ionq_sim_ideal", "IonQ simulator · ideal, no noise", "remote_sim", "ionq", "ideal", 29, "ideal", "Forte"),
         "aliases": ["simulator", "ionq"]},
        {**_row("ionq_qpu_forte-1", "IonQ Forte 1", "hardware", "ionq", "hardware", 36, "qpu.forte-1", "Forte",
                "credits"), "aliases": ["qpu"]},
@@ -75,6 +78,9 @@ class Compiled:
 
 
 def _listing() -> tuple[list[dict], str | None]:
+    if not ENGINE_IN_USE:
+        rows = [dict(r) for r in OFFLINE_CATALOG if r["id"] in OFFERED]
+        return sorted(rows, key=lambda r: OFFERED.index(r["id"])), None
     try:
         return client.backends()["backends"], None
     except (EngineUnavailable, EngineRequestError) as e:

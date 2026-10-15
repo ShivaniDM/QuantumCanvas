@@ -21,7 +21,7 @@ const TERMS = [
   ['Counts', 'How many shots gave each outcome.'],
   ['Measured frequency', 'Counts divided by shots. It is close to, but rarely exactly, the predicted probability.'],
   ['Predicted probability', 'The exact probability worked out from the state, with no sampling.'],
-  ['Backend', 'Where a circuit runs: the built-in simulator, a noisy simulator, or quantum hardware.'],
+  ['Backend', 'Where a circuit runs: the built-in simulator (Qiskit Aer) or an IonQ cloud simulator, either ideal or with a device noise model.'],
   ['Oracle', 'A step that marks one or more basis states, usually by flipping the sign of their amplitude.'],
   ['Amplitude amplification', 'Reflecting every amplitude about the average so that marked states become more likely. The core of Grover search.'],
 ];

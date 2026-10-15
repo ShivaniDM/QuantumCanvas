@@ -38,6 +38,25 @@ def save_record(rec: RunRecorder, response: dict | None = None) -> str | None:
         return msg
 
 
+NO_MEASURE_MESSAGE = ("This circuit has no Measure step, so there is nothing to measure. "
+                      "Add a Measure step to run it.")
+SAMPLING_P_THRESHOLD = 1e-3
+
+
+def _sampling_p(pred: dict, obs: dict, shots: int) -> float:
+    from scipy.stats import chisquare
+    import numpy as np
+    keys = sorted(k for k in pred if pred[k] > 0)
+    if len(keys) < 2:
+        return 1.0 if sum(obs.get(k, 0) for k in keys) == shots else 0.0
+    if sum(obs.get(k, 0) for k in keys) < shots:
+        return 0.0
+    o = np.array([obs.get(k, 0) for k in keys], dtype=float)
+    exp = np.array([pred[k] for k in keys], dtype=float)
+    exp = exp / exp.sum() * shots
+    return float(chisquare(o, exp).pvalue)
+
+
 def _noise_aware(log: dict, counts) -> None:
     pred = log.get("predicted") or {}
     obs = {str(k).replace(" ", ""): int(v) for k, v in (counts or {}).items() if k != "circuit_hash"}
@@ -49,11 +68,22 @@ def _noise_aware(log: dict, counts) -> None:
             keys = set(pred) | set(obs)
             d = 0.5 * sum(abs(pred.get(k, 0.0) - obs.get(k, 0) / shots) for k in keys)
             ideal_mass = sum(obs.get(k, 0) for k in pred if pred[k] > 0) / shots
-            log["checks"][i] = {"check": "observed counts vs ideal prediction (noisy backend)", "ok": None,
-                                "noise_tvd": round(d, 4),
-                                "detail": f"noise moved {d * 100:.1f}% of the probability (total variation distance "
-                                          f"{d:.3f}); {ideal_mass * 100:.1f}% of shots landed on outcomes an ideal "
-                                          f"device can produce"}
+            p = _sampling_p(pred, obs, shots)
+            if ideal_mass == 0:
+                detail = ("none of the shots landed on an outcome this circuit can produce, which points to a problem "
+                          "reading the results back rather than to noise")
+                ok = False
+            elif p > SAMPLING_P_THRESHOLD:
+                detail = (f"the difference (total variation distance {d:.3f}) is within normal random variation for "
+                          f"{shots:,} shots, so no noise effect can be seen at this number of shots")
+                ok = None
+            else:
+                detail = (f"the counts differ from the ideal prediction by more than {shots:,} shots alone explain: "
+                          f"noise moved about {d * 100:.1f}% of the probability (total variation distance {d:.3f}); "
+                          f"{ideal_mass * 100:.1f}% of shots landed on outcomes an ideal device can produce")
+                ok = None
+            log["checks"][i] = {"check": "observed counts vs ideal prediction (noisy backend)", "ok": ok,
+                                "noise_tvd": round(d, 4), "sampling_p": round(p, 4), "detail": detail}
             return
 
 
@@ -145,6 +175,9 @@ def execute(req: dict) -> dict:
             if not concept.ok:
                 rec.error("validate", concept.errors[0].code, concept.errors[0].message)
                 _fail(rec, response, logger, "; ".join(e.message for e in concept.errors), 400)
+            if not any(o.get("op") == "measure" for o in concept_doc.get("operations", [])):
+                rec.error("validate", "E_NO_MEASURE", NO_MEASURE_MESSAGE)
+                _fail(rec, response, logger, NO_MEASURE_MESSAGE, 400)
             logger.save("concept_ir.json", req["concept_ir"])
             rec.compile.update(ir_hash=circuit_hash, gates=concept.gates, trace=[list(t) for t in concept.trace],
                                qiskit_py=concept.qiskit_py, qasm3=concept.qasm3, pseudocode=concept.pseudocode,
@@ -194,8 +227,8 @@ def _target_spec(backend: str):
 
 
 def _attach_report(rec, response, req, backend_id, concept):
-    from engine_bridge import client
-    if not client.configured():
+    from engine_bridge import bridge, client
+    if not bridge.ENGINE_IN_USE or not client.configured():
         return
     try:
         from engine_bridge.bridge import compile_request
@@ -212,7 +245,10 @@ def _run_target(rec, req, spec, concept, concept_doc, logger, response, circuit_
     result = None
     try:
         with rec.stage("compile"):
-            if spec.group == "local_sim":
+            from engine_bridge.bridge import ENGINE_IN_USE
+            if spec.provider == "ionq" and not ENGINE_IN_USE:
+                compiled = offline_ionq(req, spec, concept=concept)
+            elif spec.group == "local_sim":
                 compiled, result = run_request(req, spec.id, concept=concept)
             else:
                 try:

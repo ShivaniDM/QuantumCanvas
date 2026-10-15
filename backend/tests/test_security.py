@@ -85,7 +85,15 @@ def test_oversized_document_is_rejected_at_compile_too():
     assert r.status_code == 400
 
 
-def test_qpu_backend_is_refused_when_not_explicitly_enabled():
+def test_qpu_backend_is_not_offered():
+    r = client.post("/execute", json={"canvas_json": "{}", "ir_json": IR_1Q, "pseudocode_txt": "",
+                                      "qiskit_py": LEGIT_SRC, "backend": "qpu", "shots": 10})
+    assert r.status_code == 400 and "isn't offered" in r.json()["detail"]
+
+
+def test_qpu_backend_is_refused_when_offered_but_not_explicitly_enabled(monkeypatch):
+    from engine_bridge import bridge
+    monkeypatch.setattr(bridge, "OFFERED", bridge.OFFERED + ("qpu",))
     assert str(settings.ALLOW_QPU_SUBMIT).lower() != "on"
     r = client.post("/execute", json={"canvas_json": "{}", "ir_json": IR_1Q, "pseudocode_txt": "",
                                       "qiskit_py": LEGIT_SRC, "backend": "qpu", "shots": 10})

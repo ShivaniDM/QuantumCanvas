@@ -92,7 +92,7 @@ def test_template_works_for_circuits_without_a_measurement():
     doc = {"version": "0.3", "qubits": 2, "classical_bits": 0, "operations": [
         {"id": "a", "op": "shake", "targets": [0]}, {"id": "b", "op": "entangle", "targets": [0, 1]}]}
     t = template_explanation(analyze_document(doc, code_check=False), doc, None, ["Q1", "Q2"])
-    assert "no Measure step" in t["summary"] and "q0 → c0, q1 → c1" in t["summary"] and len(t["steps"]) == 2
+    assert "no Measure step, so nothing is measured" in t["summary"] and "q0 → c0, q1 → c1" in t["summary"] and len(t["steps"]) == 2
     assert "|00⟩ 50%" in t["summary"] and "|11⟩ 50%" in t["summary"]
 
 
